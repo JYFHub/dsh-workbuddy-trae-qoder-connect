@@ -1,6 +1,6 @@
 # probes/ 验证脚本
 
-## 确定性脚本（23 个，309 项断言）
+## 确定性脚本（24 个，319 项断言）
 
 不依赖网络、不需要重启 DSH，任何机器 `node probes/verify-xxx.mjs` 就能跑；断言对象是**装着的那份插件**（`_installed.mjs` 按 profile 依赖键定位，包改名不会让整批探针变红）。输出统一是 `N 通过 / M 失败`，退出码即结果。加 `--installed` 则改测 profile 里跑着的那份。
 
@@ -17,6 +17,7 @@ node probes/verify-probe-contract.mjs                # 探查契约与 onProbed 
 node probes/verify-install-peers.mjs                # 安装分发契约：peer 必须 optional（14）
 node probes/verify-qoder-auth-retry.mjs              # Qoder 凭据重试（11）
 node probes/verify-trae-parser-handoff.mjs           # 流式残片与收尾（11）
+node probes/verify-workbuddy-intl-checkin.mjs        # 国际版"没有签到活动"不被谎报成已签（10）
 node probes/verify-qoder-stream-fixes.mjs            # Qoder 首事件批 / 返回形状 / 取消接线（9）
 node probes/verify-workbuddy-tool-pairing.mjs        # 跨渠道工具配对（9）
 node probes/verify-attachment-wiring.mjs             # 三家附件接线（9）

@@ -2,11 +2,11 @@
 
 ![三家免费额度，一个模型下拉](assets/social-preview.png)
 
-**WorkBuddy（国区版 + 国际版）、Qoder CN、Trae CN 每天都在发免费额度和签到积分。这一个插件把三家接进 DeepSeek Harness：一个模型下拉、一份对话历史、打开面板自动签到。**
+**WorkBuddy（国区版 + 国际版）、Qoder CN、Trae CN 的免费额度都能在这里用起来。这一个插件把三家接进 DeepSeek Harness：一个模型下拉、一份对话历史，打开面板顺手把能领的积分领掉。国际版另有限时免费模型（`deepseek-v4.1-flash` 当前 `x0.00`）。**
 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **English** — WorkBuddy (China and international), Qoder CN and Trae CN all hand out free quota and daily check-in credits. This one DSH plugin pools all three into a single model picker with one shared conversation history, and claims the day's check-in for you when the panel opens. Switch channels mid-conversation without losing context, with live credit multipliers, per-model reasoning effort and image input.
+> **English** — WorkBuddy (China and international), Qoder CN and Trae CN all hand out free quota. This one DSH plugin pools all three into a single model picker with one shared conversation history, and claims the day's check-in for you when the panel opens. The international edition has no check-in campaign but does carry limited-time free models (`deepseek-v4.1-flash` at `x0.00`). Switch channels mid-conversation without losing context, with live credit multipliers, per-model reasoning effort and image input.
 
 ---
 
@@ -26,11 +26,11 @@
 
 ## 你会得到什么
 
-**一个下拉装下三家。** 模型按渠道分组，每个模型旁标着积分倍率，哪个贵一眼可见。Trae CN 的目录最全，独占 `glm-5.3-flash`、`kimi-k2.8-preview`、`qwen3.8-flash` 等；WorkBuddy 国际版带来 `gpt-5.5`、`gemini-3.1-pro` 这些国区没有的。
+**一个下拉装下三家。** 模型按渠道分组，每个模型旁标着积分倍率，哪个贵一眼可见。Trae CN 的目录最全，独占 `glm-5.3-flash`、`kimi-k2.8-preview`、`qwen3.8-flash` 等；WorkBuddy 国际版带来 `gpt-6-astra`、`grok-4.7`、`deepseek-v4.1-flash`（当前 `x0.00`，白用）这些国区没有的。
 
 **对话中途换渠道，历史不断。** 从 Trae 的模型换到 WorkBuddy 的接着聊，上下文原样带过去。
 
-**签到不用记。** 打开面板自动领当天三家的积分，重复打开也只领一次、不重复扣分。可以在设置里关掉。
+**签到不用记。** 打开面板自动领当天能领的积分，重复打开也只领一次、不重复扣分。可以在设置里关掉。（国际版没有签到活动，会显示「不适用」；企业号同理。）
 
 **额度看得见。** 每个渠道剩多少积分、按套餐怎么拆、什么时候重置，面板直接显示。
 
@@ -45,11 +45,13 @@
 | 渠道 | 接入内容 | 免费额度 | 登录方式 |
 |---|---|---|---|
 | **WorkBuddy** | 个人版多账号（槽位不限）+ 企业版 | 每日签到领积分 | 脚本生成授权链接，浏览器登录 |
-| **WorkBuddy AI 国际版** | 国际版客户端全部模型（GPT-5.x / Gemini-3.x / GLM-5.3 / Kimi-K3…） | 每日签到领积分 | 装了国际版客户端并登录即可，自动跟随 |
+| **WorkBuddy AI 国际版** | 国际版客户端全部模型（GPT-6 / Gemini-3.x / GLM-5.3 / Kimi-K3 / Grok-4.7…） | **限时免费模型**，如 `deepseek-v4.1-flash`（倍率 `x0.00`） | 装了国际版客户端并登录即可，自动跟随 |
 | **Qoder CN** | 账号下全部模型 | 每日签到活动 | 官方 PAT，或直接用桌面 App 的登录态 |
 | **Trae CN / TRAE SOLO CN** | 两个产品各自的全部模型 | 每日签到领积分 | 本机客户端凭据导出 |
 
-国际版（`www.workbuddy.ai`）和国区版是**两个独立客户端**，模型阵容差别很大——国际版有 `gpt-5.5` / `gpt-5.4` / `gemini-3.1-pro` / `gpt-5.6-sol` 这些国区没有的，国区有 `deepseek-v3-2-volc` / `hy3`。装了哪个就自动读哪个；两个都装就两个渠道并排。国际版凭据是加密存的，插件用客户端自己的 Electron 解封，**不碰钥匙串、不落明文**。
+国际版（`www.workbuddy.ai`）和国区版是**两个独立客户端**，模型阵容差别很大——国际版有 `gpt-6-astra` / `grok-4.7` / `deepseek-v4.1-flash` 这些国区没有的，国区有 `deepseek-v3-2-volc` 等。装了哪个就自动读哪个；两个都装就两个渠道并排。
+
+**国际版没有签到活动**，它的免费额度体现在**限时免费模型**上：`deepseek-v4.1-flash` 当前倍率 `x0.00`，按倍率算不扣积分（倍率是上游实时给的，以模型列表里显示的为准）。国际版凭据是加密存的，插件用客户端自己的 Electron 解封，**不碰钥匙串、不落明文**。
 
 TRAE SOLO CN 有自己的 8 个模型（`glm-5` / `kimi-k2.5` / `qwen-3.5` 等）。两个产品一条命令互切、凭据独立、目录分存，切换 30 秒内热生效，不用重启：
 
@@ -95,11 +97,12 @@ WorkBuddy 登录要轮询到成功为止。完成后汇报各渠道状态与模�
 ## 暂不支持
 
 - 插件代码改动需重启 DSH；凭据与产品切换是热生效
+- **WorkBuddy AI 国际版没有签到活动**，面板会显示「不适用」（它的免费额度体现在限时免费模型上，如 `deepseek-v4.1-flash` 当前 `x0.00`）
 - 少数老模型不是 1M 上下文（如 `kimi-k2.6`），以模型列表里显示的为准
 
 ## 开发与验证
 
-- **23 个确定性验证脚本、309 项断言**，不依赖网络、离线可跑，当前全绿；另有 3 个活体脚本做真实上游单点实测。清单与探针纪律见 [probes/README.md](probes/README.md)
+- **24 个确定性验证脚本、319 项断言**，不依赖网络、离线可跑，当前全绿；另有 3 个活体脚本做真实上游单点实测。清单与探针纪律见 [probes/README.md](probes/README.md)
 - 历次 bug 修复记在 [CHANGELOG.md](CHANGELOG.md)，不当卖点用
 - 设计细节：[docs/CATALOG.md](docs/CATALOG.md) · [docs/TRAE-CN-PRODUCTS.md](docs/TRAE-CN-PRODUCTS.md) · [docs/TRAE-REASONING-EFFORT.md](docs/TRAE-REASONING-EFFORT.md)
 

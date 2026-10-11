@@ -4,6 +4,7 @@
 
 ## 2026-10
 
+- **国际版"没有签到活动"被谎报成"今天已签到"**：WorkBuddy AI 账号打 `daily-checkin` 回 `10001 签到活动未开启或已过期`，国区个人号同期回 `10001 今天已签到，请明天再来` —— **同一个 code、含义相反**，而代码只按「不支持」关键词分流，于是国际版被判成 `already-claimed`，面板显示"已签到"（纯属谎报）。同时只读路径把国际版的看板默认值（`active:false`/`today_checked_in:false`）当成"今天还没签"，返回 `claimable`，界面给出一个**可点的『签到』按钮**，点下去才发现什么都没有 —— 正是同文件企业号那段注释明令避免的"假动作入口"。现在 `10001` 按文案分成三态（已签 / 无活动 / 不支持），且区域兜底直接判国际版为不适用。实测确认：国际版与 `hy3` 的 `deepseek-v4.1-flash` 倍率为 `x0.00`（免费），这是它的免费额度来源。
 - **从插件市场装不上（issue #2）**：用户点安装，失败，市场把原因归为 `plugin-side install failure` —— 这次归类是**对的**，问题在我们自己的 `package.json`。11 个宿主 peer 依赖一个都没标 optional，于是 pnpm 要往用户 profile 里拖进 **164 个传递依赖**（`@earendil-works/pi-ai` 全家桶、`@aws-sdk/*` 等），并撞上 pnpm 的构建脚本拦截门 `[ERR_PNPM_IGNORED_BUILDS]` 直接 exit 1。实测对比：不标 = 装 165 个包 + 失败；全标 + 装 1 个包 + 997 ms 成功。这些包本来就由宿主进程提供、进不了 profile 的 node_modules，标 optional 不影响运行。同生态的干净插件全都这么做（`dsh-free-search` 8/8、`dsh-rewind-plugin` 16/16）。
   - 新增 `probes/verify-install-peers.mjs`：钉住「每个 peer 都必须 optional」+ `dependencies` 必须为空，并在本地复刻插件市场的入口校验（`resolvePackageEntry` → 入口文件必须真实存在），让这类分发缺漏不可能再装到一半才被发现。
 - **国际版（WorkBuddy AI）从未被真正接通**（issue #1）：上游原版本来就是「国区 + 国际版」双变体，`GLOBAL_BASE`、`regionOf`、`resolveGlobalIdentity`、`WORKBUDDY_AI_*` 路由一行没删，是本地分支把 `workbuddyVariantOf` 的 `appName` / `region` / `desktopFilename` 写死成国区，于是没有任何变体能走到那条分支（`region: "cn"` 让国际版凭据在 `WorkBuddyCredentialStore.current()` 里直接被判为「区域不匹配」抛错）。现在区域由注册表条目声明（`region: cn | global`），认不出的值回落国区。
