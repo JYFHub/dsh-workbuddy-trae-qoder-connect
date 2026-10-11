@@ -35,7 +35,7 @@ import { join } from 'node:path';
 
 /**
  * 源码目录：默认读**仓库自身**（相对本脚本），所以它校验的是真正被提交的那份；
- * `--installed` 才去读 `~/.dsh/profiles/desktop/node_modules/dsh-connect` 里跑着的那份。
+ * `--installed` 才去读 `~/.dsh/profiles/desktop/node_modules/dsh-workbuddy-trae-qoder-connect` 里跑着的那份。
  *
  * 为什么默认读仓库而不是安装目录：仓库才是事实来源。这个 bug 的本质是
  * 「跑着的那份」和「仓库里的那份」可以长期分叉 —— 装一次、以后手工改
@@ -45,7 +45,7 @@ import { join } from 'node:path';
 const USE_INSTALLED = process.argv.includes('--installed');
 const REPO_ROOT = join(homedir(), '.dsh', 'repos', 'dsh-workbuddy-trae-qoder-connect');
 const SRC = USE_INSTALLED
-  ? join(homedir(), '.dsh', 'profiles', 'desktop', 'node_modules', process.env.DSH_CONNECT_DIR ?? 'dsh-connect', 'lib', 'providers')
+  ? join(homedir(), '.dsh', 'profiles', 'desktop', 'node_modules', process.env.DSH_CONNECT_DIR ?? 'dsh-workbuddy-trae-qoder-connect', 'lib', 'providers')
   : join(REPO_ROOT, 'lib', 'providers');
 
 let pass = 0;

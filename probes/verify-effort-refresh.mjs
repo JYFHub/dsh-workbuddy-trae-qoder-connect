@@ -15,13 +15,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** 探针允许两种取源：仓库内（默认）与安装副本（--installed / DSH_CONNECT_DIR）。 */
 const argInstalled = process.argv.includes("--installed");
+// 目录基准用 os.homedir()，不用 process.env.HOME：Windows 上 HOME 未定义，
+// join("", ".dsh", …) 会退化成**相对路径**，--installed 模式随即 ERR_MODULE_NOT_FOUND。
 const base = argInstalled
-  ? join(process.env.HOME ?? "", ".dsh", "profiles", "desktop", "node_modules", process.env.DSH_CONNECT_DIR ?? "dsh-workbuddy-trae-qoder-connect")
+  ? join(homedir(), ".dsh", "profiles", "desktop", "node_modules", process.env.DSH_CONNECT_DIR ?? "dsh-workbuddy-trae-qoder-connect")
   : join(here, "..");
 
 let passed = 0;

@@ -17,6 +17,8 @@ models.json
 connect-auth/
 
 # 依赖与产物
+# 探针运行期生成的桩目录（每个探针自建自删，崩了会留残渣，一律不入库）
+probes/.*-stubs/
 probes/.effort-stubs/
 probes/.qstream-stubs/
 node_modules/
