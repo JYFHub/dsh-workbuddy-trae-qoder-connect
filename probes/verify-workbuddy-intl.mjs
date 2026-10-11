@@ -88,9 +88,14 @@ for (const [spec, names] of Object.entries(stubNames)) {
   // dsh-home-paths / dsh-atomic-write 是会被真实调用的两个：前者给 DSH_HOME，
   // 后者要真的落盘 —— 用"返回假函数"的桩会让 resolveAppVersion 的写回静默失效，
   // 探针就会把"桩没实现"误报成"代码没写回"。桩的保真度直接决定探针可信度。
+  //
+  // resolveDshHome 必须**每次调用**都读环境变量，不能在生成桩文件时把值烘死：
+  // 本探针要多次把 DSH_HOME 指向不同的临时目录来驱动变体表，烘死会导致后几次
+  // 仍然读到**真实的** ~/.dsh —— 探针照样"全绿"，但它其实什么都没测到
+  // （而且会读用户真实注册表，随时可能因为用户自己的配置变化而变红）。
   const body =
     spec === "@deepseek-ai/dsh-home-paths"
-      ? `export const resolveDshHome = () => ${JSON.stringify(process.env.DSH_HOME ?? join(homedir(), ".dsh"))};\nexport default { resolveDshHome };\n`
+      ? `export const resolveDshHome = () => process.env.DSH_HOME && process.env.DSH_HOME.trim() !== "" ? process.env.DSH_HOME : ${JSON.stringify(join(homedir(), ".dsh"))};\nexport default { resolveDshHome };\n`
       : spec === "@deepseek-ai/dsh-atomic-write"
         ? [
             `import { mkdirSync, writeFileSync, renameSync } from "node:fs";`,
