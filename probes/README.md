@@ -1,18 +1,20 @@
 # probes/ 验证脚本
 
-## 确定性脚本（21 个，283 项断言）
+## 确定性脚本（23 个，309 项断言）
 
-不依赖网络、不需要重启 DSH，任何机器 `node probes/verify-xxx.mjs` 就能跑；断言对象是**装着的那份插件**（`_installed.mjs` 按 profile 依赖键定位，包改名不会让整批探针变红）。输出统一是 `N 通过 / M 失败`，退出码即结果。
+不依赖网络、不需要重启 DSH，任何机器 `node probes/verify-xxx.mjs` 就能跑；断言对象是**装着的那份插件**（`_installed.mjs` 按 profile 依赖键定位，包改名不会让整批探针变红）。输出统一是 `N 通过 / M 失败`，退出码即结果。加 `--installed` 则改测 profile 里跑着的那份。
 
 ```bash
-node probes/verify-trae-products.mjs                 # Trae 双产品变体（40）
+node probes/verify-trae-products.mjs                 # Trae 双产品变体（42）
+node probes/verify-workbuddy-intl.mjs               # WorkBuddy 国际版接入（27，含真实凭据解密）
 node probes/verify-probe-service.mjs               # 哨兵探查服务（25）
 node probes/verify-trae-effort-chain.mjs             # Trae 档位链路（22）
 node probes/verify-qoder-effort-source.mjs           # Qoder 档位来源合并（21）
 node probes/verify-trae-tool-calling.mjs             # Trae 工具调用全链路（19）
+node probes/verify-effort-refresh.mjs              # 更新模型的档位差异 + 默认档 + 兜底名单（18）
 node probes/verify-trae-output-hygiene.mjs           # Trae 输出净化 / 断流可见性 / parser 交接（17）
 node probes/verify-probe-contract.mjs                # 探查契约与 onProbed 接线（17）
-node probes/verify-effort-refresh.mjs              # 更新模型的档位差异 + 默认档 + 兜底名单（17）
+node probes/verify-install-peers.mjs                # 安装分发契约：peer 必须 optional（14）
 node probes/verify-qoder-auth-retry.mjs              # Qoder 凭据重试（11）
 node probes/verify-trae-parser-handoff.mjs           # 流式残片与收尾（11）
 node probes/verify-qoder-stream-fixes.mjs            # Qoder 首事件批 / 返回形状 / 取消接线（9）
