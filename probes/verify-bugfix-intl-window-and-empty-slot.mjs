@@ -302,12 +302,19 @@ ok("显式 false 的条目解析为不跟随", async () => {
 	eq(own.i("workbuddy5").followDesktop, false, "followDesktop");
 });
 
-ok("channelOf 只给国际版透出 region/followDesktop（国区槽位两者都缺）", () => {
+ok("channelOf 不再透出 region/followDesktop（那是策略不是状态，界面已不再显示）", () => {
+	/**
+	 * 这两个字段原先只喂给认证页那个「跟随桌面 App」chip。那个 chip 讲的是
+	 * 「**允许**回落桌面凭据」这条策略，而它显示的现象（空槽位看起来已登录）
+	 * 正是本 bug 修掉的东西；实测它在已扫码的槽位上还给出与事实相反的描述
+	 * （槽位用的是自己扫码的号，不是桌面 App 的号），所以整个撤掉。
+	 *
+	 * `followDesktop` 的**判定逻辑**当然还在（见 B2/B3 与 provider 侧），
+	 * 只是不再往界面透 —— 这条断言钉的就是"别再透出来"。
+	 */
 	const intl = registryMod.channelOf({ id: "workbuddy4", kind: "workbuddy", displayName: "国际版", region: "global" });
-	eq(intl.region, "global", "国际版 region");
-	eq(intl.followDesktop, true, "国际版缺省 followDesktop");
-	const own = registryMod.channelOf({ id: "workbuddy5", kind: "workbuddy", displayName: "国际版 2", region: "global", followDesktop: false });
-	eq(own.followDesktop, false, "显式 false");
+	eq("followDesktop" in intl, false, "国际版不该透出 followDesktop");
+	eq("region" in intl, false, "国际版不该透出 region");
 	const cn = registryMod.channelOf({ id: "workbuddy1", kind: "workbuddy", displayName: "国区", region: "cn" });
 	eq("followDesktop" in cn, false, "国区槽位不该有 followDesktop 字段");
 	eq("region" in cn, false, "国区槽位不该有 region 字段");
@@ -400,28 +407,83 @@ ok("面板 create 把 followDesktop 写进注册表（只对国际版）", () =>
 	}
 });
 
-ok("认证页把凭据来源透给前端显示（空槽位为什么显示已登录，一眼可辨）", () => {
+ok("认证页不再渲染「跟随桌面 App」chip（那是策略，不是这个槽位在用什么）", () => {
 	const panel = read("lib/panel.js");
 	/**
-	 * 必须钉在 `/auth` 那一行**内部**，不能全局搜这个 spread ——
-	 * `normalizeChannel` 里有一处**形状相同**的展开，全局正则会被它满足，
-	 * 于是"认证行没透出"这个撤回测不出来（反向验证第 12 项会假绿）。
+	 * 这个 chip 已被**有意删除**（2026-10-11，用户要求）：
+	 *   · 它显示的是「**允许**回落桌面凭据」这条策略，而 tooltip 写成「该槽位的凭据
+	 *     直接读桌面客户端的登录态 —— 桌面端登录什么号，这里就是什么号」；
+	 *   · 实测在已扫码的槽位上是**错的**：workbuddy4/5 用的是各自扫码登录的号
+	 *     （`signedInBy === "scan"` 优先），与桌面 App 那份凭据（另一个账号）无关；
+	 *   · 它要解释的现象（空槽位看起来已登录）正是本次修复消掉的东西。
+	 * 判定逻辑保留（B2/B3 与 provider 侧都还依赖它），只是不再透到界面。
 	 */
-	const rowAt = panel.indexOf('configured: slotConfigured(channel.id),');
-	if (rowAt === -1) throw new Error("找不到 /auth 行的 configured 字段（面板结构变了，先修本断言）");
-	const row = panel.slice(rowAt, rowAt + 900);
-	if (!/\.\.\.channel\.followDesktop === undefined \? \{\} : \{ followDesktop: channel\.followDesktop \}/.test(row)) {
-		throw new Error("panel 的 /auth 行没有透出 followDesktop");
+	if (/authFollowDesktopOn|authFollowDesktopOff|authFollowDesktopHint|authOwnCredentialHint/.test(panel)) {
+		throw new Error("panel 还在透出凭据来源标记的字段");
 	}
 	const client = read("lib/client.js");
-	if (!/authFollowDesktopOn/.test(client) || !/authFollowDesktopOff/.test(client)) {
-		throw new Error("认证行没有渲染凭据来源标记");
+	for (const key of ["authFollowDesktopOn", "authFollowDesktopOff", "authFollowDesktopHint", "authOwnCredentialHint"]) {
+		if (client.includes(key)) throw new Error(`client 里还留着已删除的文案键 ${key}`);
+	}
+	// 添加渠道表单那个复选框**必须留着**：它才是真正决定新槽位行为的开关。
+	if (!/authFormFollowDesktop/.test(client)) {
+		throw new Error("添加渠道表单的「跟随桌面 App」复选框被误删了（那个是有用的）");
 	}
 });
 
-ok("中英文案都补齐了新增的键（缺一个就是界面上显示原始 key）", () => {
+/**
+ * 【A4】窗口开关搬到面板行上（2026-10-11 用户要求）。
+ *
+ * 以前它只藏在 workbuddy 设置卡片的 Context 页里，而面板才是用户管渠道的地方 ——
+ * 不搜就找不到。现在做成模型数旁边的一个 chip，值来自后端下发的
+ * `maximumContextWindow`（见 panel.js 的 normalizeChannel）。
+ */
+console.log("\n【A4】最大窗口开关：搬到面板渠道行、紧挨模型数");
+
+ok("面板把 provider 的窗口偏好透到行上（只在国际版下发时才带）", () => {
+	const src = read("lib/panel.js");
+	if (!/\.\.\.typeof raw\.useMaximumContextWindow === "boolean" \? \{ maximumContextWindow: raw\.useMaximumContextWindow \} : \{\}/.test(src)) {
+		throw new Error("normalizeChannel 没有把 useMaximumContextWindow 透成行的 maximumContextWindow");
+	}
+});
+
+ok("渠道行在模型数旁边渲染这个开关，且按值分两态", () => {
 	const src = read("lib/client.js");
-	for (const key of ["authFormFollowDesktop", "authFollowDesktopOn", "authFollowDesktopOff", "authFollowDesktopHint", "authOwnCredentialHint"]) {
+	if (!/row\.maximumContextWindow === undefined\s*\?\s*null/.test(src)) {
+		throw new Error("ChannelRow 没有按 maximumContextWindow 是否存在决定显不显示");
+	}
+	for (const key of ["maxContextOn", "maxContextOff", "maxContextOnHint", "maxContextOffHint"]) {
+		const hits = (src.match(new RegExp(`\\b${key}:`, "g")) ?? []).length;
+		if (hits < 2) throw new Error(`文案键 ${key} 只出现 ${hits} 次（中英各需一次）`);
+	}
+});
+
+ok("开关写的是面板 /settings（不是 provider 探针路由），且写完重拉模型列表", () => {
+	const src = read("lib/client.js");
+	const at = src.indexOf("const onToggleMaximumContext = async (");
+	if (at === -1) throw new Error("找不到 onToggleMaximumContext");
+	const body = src.slice(at, at + 900);
+	if (!/fetch\(SETTINGS_PATH/.test(body)) {
+		throw new Error("开关没有走面板 /settings —— 那是这个偏好唯一的写入白名单所在");
+	}
+	if (!/useMaximumContextWindow: enabled/.test(body)) throw new Error("开关没有提交 useMaximumContextWindow");
+	if (!/reload\(\)/.test(body)) {
+		throw new Error("开关写完没有重拉状态 —— 模型窗口变了但界面还是旧的（自相矛盾）");
+	}
+});
+
+ok("开关是全局偏好，改完要广播模型更新（否则选择器里还是旧窗口）", () => {
+	const src = read("lib/panel.js");
+	const at = src.indexOf("const resolved = deps.prefs();");
+	if (at === -1) throw new Error("找不到 POST /settings 的回读处");
+	const body = src.slice(at, at + 500);
+	if (!/deps\.onModelsChanged\?\.\(\)/.test(body)) {
+		throw new Error("窗口偏好改完没有 onModelsChanged —— 宿主缓存着旧的模型列表，选择器里窗口不会变");
+	}
+});
+
+ok("中英文案都补齐了新增的键（缺一个就是界面上显示原始 key）", () => {	const src = read("lib/client.js");
+	for (const key of ["authFormFollowDesktop"]) {
 		const hits = (src.match(new RegExp(`\\b${key}:`, "g")) ?? []).length;
 		if (hits < 2) throw new Error(`文案键 ${key} 只出现 ${hits} 次（中英各需一次）`);
 	}

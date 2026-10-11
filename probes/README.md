@@ -6,7 +6,7 @@
 
 ```bash
 node probes/verify-trae-products.mjs                 # Trae 产品变体（56）
-node probes/verify-bugfix-intl-window-and-empty-slot.mjs  # 国际版最大窗口 + 空槽位不显示模型（36）
+node probes/verify-bugfix-intl-window-and-empty-slot.mjs  # 国际版最大窗口（含面板开关）+ 空槽位不显示模型（40）
 node probes/verify-workbuddy-intl.mjs               # WorkBuddy 国际版接入（含真实凭据解密）
 node probes/verify-probe-service.mjs               # 哨兵探查服务（25）
 node probes/verify-trae-effort-chain.mjs             # Trae 档位链路（22）

@@ -112,11 +112,25 @@ const REVERSALS = [
 		expect: "端到端：已登录的国际版槽位，状态文档带 useMaximumContextWindow=true 且模型广告 1M 窗口",
 	},
 	{
-		name: "B/6 认证行不再透出凭据来源（空槽位为何显示已登录又看不出了）",
+		name: "B/6 channelOf 又把 region/followDesktop 透出去（界面会显示一条与事实相反的标记）",
+		file: "lib/channel-registry.js",
+		from: "      credentialHint: `connect-auth/${entry.id}.json`,\n",
+		to: "      credentialHint: `connect-auth/${entry.id}.json`,\n      ...entry.region === \"global\" ? { region: \"global\" } : {},\n      ...entry.region === \"global\" ? { followDesktop: entry.followDesktop !== false } : {},\n",
+		expect: "channelOf 不再透出 region/followDesktop",
+	},
+	{
+		name: "A/7 面板不再把窗口偏好透到行上（开关又只剩设置卡片里那一个入口）",
 		file: "lib/panel.js",
-		from: "                ...channel.followDesktop === undefined ? {} : { followDesktop: channel.followDesktop },\n",
+		from: '    ...typeof raw.useMaximumContextWindow === "boolean" ? { maximumContextWindow: raw.useMaximumContextWindow } : {},\n',
 		to: "",
-		expect: "认证页把凭据来源透给前端显示",
+		expect: "面板把 provider 的窗口偏好透到行上",
+	},
+	{
+		name: "A/8 开关写回后不广播模型更新（选择器里还是旧窗口）",
+		file: "lib/panel.js",
+		from: "        if (typeof safe.useMaximumContextWindow === \"boolean\") {\n          try {\n            deps.onModelsChanged?.();\n          } catch {\n            /* 通知失败不影响写入结果 */\n          }\n        }\n",
+		to: "",
+		expect: "开关是全局偏好，改完要广播模型更新",
 	},
 ];
 

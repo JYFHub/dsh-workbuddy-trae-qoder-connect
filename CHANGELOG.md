@@ -8,11 +8,15 @@
   1. 偏好读的是 `config.useMaximumContextWindow`，而 `lib/index.js` 用 `apply(ctx, {})` 调子模块、第二个参数恒为空对象 —— 读到的**永远**是 false。偏好现在挂在面板/插件自己的 `Config`（`HUB_SECTION`，宿主唯一会投影的那份）上，由 `lib/index.js` 通过 `workbuddy.setPreferences(hubPreferences)` 把读写通道注入子模块；`catalog` 改成**惰性读源**（每次 `current()` 现读），所以面板里改完立刻生效，不用重启。
   2. 状态路由只在 `legacySettingsAvailable` 时才下发 `useMaximumContextWindow`，而那个条件要求宿主有 `settings.installSection` —— 本机 DSH 没有，于是字段从不出现、复选框根本不渲染。现在按 `region === "global"` 下发（写通道不可用时仍返回 `undefined`，界面就不显示一个存不下去的开关）。
   3. 前端又把复选框钉在 `variant.id === AI_CARD_VARIANT.id`（= `workbuddy2`），所以 `workbuddy4/5` 这些国际版槽位即使拿到字段也永远看不到。现在只看后端给不给这个字段。
+  - **这个开关从设置卡片搬到了面板渠道行**（用户要求）：它原先只藏在 workbuddy 设置卡片的 Context 页里，而面板才是用户管渠道的地方 —— 不搜就找不到。现在做成模型数旁边的一个 chip（`1M 上下文` / `默认窗口`），点一下就切。**实测可随时切换、不用重启**：POST 之后 `deepseek-v4.1-flash` 的 `contextWindow` 在 `1000000` 与 `300000` 之间即时来回。
+    - ⚠️ 它是**全局**偏好（settings 里只有一个键）：在一个槽位上点，所有国际版槽位一起变 —— tooltip 里写明了，免得以为是单槽位设置。
+    - 顺带修了一个自相矛盾：偏好确实是惰性读的，但**宿主对各 provider 的模型列表有缓存**，写完不广播就会出现"面板行显示新值、模型选择器里还是旧窗口"。现在写完 `onModelsChanged()` 广播一次。
+    - 另外说明为什么做不到"所有模型都 1M"：实测本机目录 25 个模型里 **17 个已经 1M**，剩下 8 个（`grok-4.7`=500K、`gpt-5.4`/`primary-model`=272K、`balanced-model`/`kimi-k2.6`=256K、`fast-model`=200K、`hy3`=192K、`default-model`=176K）是上游自己只声明那么大，硬报 1M 会让 DSH 往上游塞超限上下文换来 400。
 - **刚添加、还没认证的国际版槽位会把模型漏进模型选择器**（用户报）：新建槽位的用途是多账号，而国际版槽位的默认读法是"直接读桌面 App 的登录态"，于是空槽位立刻借到 App 里那份凭据、看起来已登录（实测借到的还是**另一个槽位**的账号），`adoptIdentity` 据此把 catalog 置为可见，一整套不属于它的模型进入选择器。修复分四处：
   - 注册表新增 `followDesktop`，**缺失按 true**（旧条目逐字保持原行为，升级不会突然"未登录"）；面板新增的国际版槽位显式写 `false`，表单里也能勾选"跟随桌面 App"。
   - provider 侧 `configuredAuthFile` 与 store 侧 `resolveDesktopCandidates` **两侧**都按它分流：不跟随的槽位只认 `connect-auth/<id>.json`（通常不存在 ⇒ 干净地未登录），绝不落到平台默认探测。两侧都改是因为 CLI（`bin.js doctor`）与其它调用方不会经过 provider。
-  - 认证页给国际版槽位显示凭据来源（「跟随桌面 App」/「独立凭据」），让"为什么空槽位显示已登录"一眼可辨。
-  - 新增 `probes/verify-bugfix-intl-window-and-empty-slot.mjs`（32 项），并配 `scripts/reverse-verify-bugfix.mjs`：把 10 处修复逐个撤回，对应断言必须变红（已实测全部按预期变红）。
+  - 认证页一度给国际版槽位显示一个「跟随桌面 App」chip，**现已删掉**（用户要求）：它显示的是「**允许**回落桌面凭据」这条策略，tooltip 却写成"该槽位的凭据直接读桌面客户端的登录态"—— 实测在已扫码的槽位上是**错的**（`workbuddy4/5` 用的是各自扫码登录的号，`signedInBy === "scan"` 优先，与桌面 App 那份凭据无关），而它要解释的现象正是本次修复消掉的东西。判定逻辑保留，只是不再透到界面。
+  - 新增 `probes/verify-bugfix-intl-window-and-empty-slot.mjs`（40 项），并配 `scripts/reverse-verify-bugfix.mjs`：把 14 处修复逐个撤回，对应断言必须变红（已实测全部按预期变红）。
 - **TRAE SOLO CN 已被厂商并入 Trae CN IDE**（用户报）：本机实测卸载表里只剩 `TRAE CN 3.4.2`，`D:\TRAE SOLO CN\TRAE SOLO CN.exe` 已不存在，残留 `product.json` 的 `commit`/`buildId` 与 Trae CN **逐字节相同**。所以代码与文案里"两个产品"的说法全面收口：
   - 插件侧 `TRAE_DEFAULT_PRODUCT` 从 `solo` 翻成 `cn`；`cn` 的 `functions`/`rateFunctions`/`catalogGroups` 统一成 IDE 自己的三个分组（`solo_agent` / `chat_v3` / `builder_v3`）。理由不止是省一次往返：`reasoningByGroup` / `contextWindowByGroup` 只带这三组的数据，真用旧 SOLO 槽位名去请求会让思考档位静默失效、窗口退回兜底值。
   - `solo` 那条**逐字冻结**（白名单、倍率查询集、目录分组、兜底名单、目录子目录全部保持并入前的值）：手里拿着 SOLO 快照的人没有重导的机会（独立客户端装不回来了），任何一项跟着 CN 改都会让他们在某次重启后突然掉模型、掉倍率、掉档位。`resolveProduct` 仍按 buildId / `packageType` 把无标注的旧快照嗅探成 solo。
