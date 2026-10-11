@@ -447,6 +447,42 @@ ok("面板把 provider 的窗口偏好透到行上（只在国际版下发时才
 	}
 });
 
+/**
+ * 这一条走**真实的 `normalizeChannel`**（从 panel.js 里 load 出来），而不是搜源码文本：
+ * 它是「provider 的状态文档 → 面板行」那一跳，前面所有断言都没覆盖。
+ * 顺手钉住"只有 boolean 才透" —— 缺字段（国区 / 写通道不可用）时不能凭空给一个 false，
+ * 那会让界面在国区槽位上也画出一个点不动的开关。
+ */
+ok("真实 normalizeChannel：有字段才透，且只认 boolean", async () => {
+	const panel = await import(`${pathToFileURL(join(REPO, "lib", "panel.js")).href}?a4=${Date.now()}`);
+	const channel = { id: "workbuddy4", provider: "workbuddy4", displayName: "国际版", kind: "workbuddy" };
+	const signedIn = (extra) => ({
+		status: "signed-in",
+		nickname: "u",
+		...extra,
+	});
+	eq(
+		panel.normalizeChannel(channel, signedIn({ useMaximumContextWindow: true })).maximumContextWindow,
+		true,
+		"开着时透出 true",
+	);
+	eq(
+		panel.normalizeChannel(channel, signedIn({ useMaximumContextWindow: false })).maximumContextWindow,
+		false,
+		"关着时透出 false",
+	);
+	eq(
+		"maximumContextWindow" in panel.normalizeChannel(channel, signedIn({})),
+		false,
+		"provider 没下发时行里不该有这个字段（国区槽位否则会画一个点不动的开关）",
+	);
+	eq(
+		"maximumContextWindow" in panel.normalizeChannel(channel, signedIn({ useMaximumContextWindow: "yes" })),
+		false,
+		"非 boolean 一律不透（半个值比没有更糟）",
+	);
+});
+
 ok("渠道行在模型数旁边渲染这个开关，且按值分两态", () => {
 	const src = read("lib/client.js");
 	if (!/row\.maximumContextWindow === undefined\s*\?\s*null/.test(src)) {
