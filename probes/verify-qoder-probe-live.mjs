@@ -18,10 +18,16 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createCipheriv, createHash, publicEncrypt, randomUUID } from "node:crypto";
+import { installedLibDir } from "./_installed.mjs";
 
-const PLUGIN_DIR = join(homedir(), ".dsh", "profiles", "desktop", "node_modules", process.env.DSH_CONNECT_DIR ?? "dsh-connect");
-// 从插件源码里取常量（照抄实现，避免探针与线上不同形）。
-const qoderSrc = readFileSync(join(PLUGIN_DIR, "lib", "providers", "qoder", "index.js"), "utf8");
+/**
+ * 从**装着的那份**插件源码里取常量（照抄实现，避免探针与线上不同形）。
+ *
+ * ⚠️ 这里曾经写死 `dsh-connect`（包改名前的老名字）：那会让探针在每台机器上以
+ * ENOENT 变红，而报错看起来像"断言失败"、实际只是路径没了。走 `_installed.mjs`
+ * 按 profile 依赖键定位，包名再改也不会连坐。
+ */
+const qoderSrc = readFileSync(join(installedLibDir(), "providers", "qoder", "index.js"), "utf8");
 
 const CUSTOM_ALPHABET = "_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!";
 const STD_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

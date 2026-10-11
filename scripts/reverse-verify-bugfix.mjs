@@ -1,0 +1,163 @@
+#!/usr/bin/env node
+/**
+ * 反向验证：把 Bug A / Bug B 的每一处修复**逐个撤回**，新探针必须变红，
+ * 而且必须红在**对应的那条**断言上。绿着说明那条断言没测到东西。
+ *
+ * 做法：备份文件 → 字面替换成"修复前"的写法 → 跑探针 → 断言
+ *   (a) 退出码非 0，
+ *   (b) 输出里出现预期断言标签的 ✗ 行，
+ * 然后从备份还原（逐字节）。
+ *
+ * 用法：node scripts/reverse-verify-bugfix.mjs
+ */
+import { copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO = join(HERE, "..");
+const PROBE = join(REPO, "probes", "verify-bugfix-intl-window-and-empty-slot.mjs");
+const NODE = process.execPath;
+
+/**
+ * 每一处撤回：
+ *   file    —— 仓库相对路径
+ *   from    —— 修复后的字面量（必须**唯一**出现）
+ *   to      —— 修复前的写法
+ *   expect  —— 预期变红的断言标签（子串匹配）
+ */
+const REVERSALS = [
+	{
+		name: "A/1 catalog 惰性读源没接上活偏好",
+		file: "lib/providers/workbuddy/index.js",
+		from: '\tif (variant.region === "global") catalog.setMaximumContextWindowSource(maximumContextWindowEnabled);\n',
+		to: "",
+		expect: "国际版变体把 catalog 的窗口来源接到活偏好上",
+	},
+	{
+		name: "A/2 状态路由不再下发该字段（退回 legacySettingsAvailable 时代的形状）",
+		file: "lib/providers/workbuddy/index.js",
+		from: '\t\t\t\t...runtime.variant.region === "cn" ? {} : { useMaximumContextWindow: maximumContextWindowField }\n',
+		to: "",
+		expect: "状态路由对**任意国际版槽位**下发该字段",
+	},
+	{
+		name: "A/3 前端复选框又钉回 AI_CARD_VARIANT（= workbuddy2）",
+		file: "lib/client.js",
+		from: '\t\t\t\t\t\t\t\t\t...status.useMaximumContextWindow !== void 0 ? {',
+		to: '\t\t\t\t\t\t\t\t\t...variant.id === AI_CARD_VARIANT.id && status.useMaximumContextWindow !== void 0 ? {',
+		expect: "前端复选框不再按卡片 id 门控",
+	},
+	{
+		name: "A/4 index.js 不再注入 hubPreferences（偏好永远读不到）",
+		file: "lib/index.js",
+		from: "      workbuddy.setPreferences(hubPreferences);\n",
+		to: "",
+		expect: "index.js 把 hubPreferences 注入 workbuddy",
+	},
+	{
+		name: "A/5 面板 POST /settings 白名单丢掉该键（勾了也写不进去）",
+		file: "lib/panel.js",
+		from: '        if (typeof patch?.useMaximumContextWindow === "boolean") safe.useMaximumContextWindow = patch.useMaximumContextWindow;\n',
+		to: "",
+		expect: "面板 POST /settings 的写入白名单含 useMaximumContextWindow",
+	},
+	{
+		name: "B/1 provider 侧 configuredAuthFile 退回「国际版一律跟随桌面 App」",
+		file: "lib/providers/workbuddy/index.js",
+		from: '\t\tif (variant.followDesktop !== true) return join(resolveDshHome(), "connect-auth", `${variant.id}.json`);\n',
+		to: "",
+		expect: "provider 侧 configuredAuthFile 对不跟随的槽位给出自己的落点",
+	},
+	{
+		name: "B/2 store 侧不再按 followDesktop 分流（CLI / 其它调用方仍会借桌面凭据）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: `\t\tif (this.variant !== void 0) {
+\t\t\tif (this.variant.region === "global" && this.variant.followDesktop !== true) {
+\t\t\t\treturn [join(resolveDshHome(), "connect-auth", \`\${this.variant.id}.json\`)];
+\t\t\t}
+\t\t\treturn desktopAuthCandidatesFor(this.variant);
+\t\t}
+\t\treturn defaultDesktopAuthCandidates();`,
+		to: '\t\treturn this.variant === void 0 ? defaultDesktopAuthCandidates() : desktopAuthCandidatesFor(this.variant);',
+		expect: "不跟随的国际版槽位：候选里**没有**桌面 App 的 basename",
+	},
+	{
+		name: "B/3 变体表把 followDesktop 写死成 true（新增槽位又跟随）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: "\t\tfollowDesktop: entry.followDesktop !== false,\n",
+		to: "\t\tfollowDesktop: true,\n",
+		expect: "显式 false 的条目解析为不跟随",
+	},
+	{
+		name: "B/4 注册表归一化丢掉 followDesktop（面板写的 false 被吃掉）",
+		file: "lib/channel-registry.js",
+		from: '  const followDesktop = kind === "workbuddy" && typeof value.followDesktop === "boolean" ? value.followDesktop : undefined;\n',
+		to: "  const followDesktop = undefined;\n",
+		expect: "不跟随的空槽位状态是 signed-out",
+	},
+	{
+		name: "B/5 面板 create 不再收敛 followDesktop（缺省变回跟随）",
+		file: "lib/panel.js",
+		from: '            const followDesktop = kind === "workbuddy" && region === "global" ? body?.followDesktop === true : undefined;\n',
+		to: "",
+		expect: "面板 create 把 followDesktop 写进注册表",
+	},
+	{
+		name: "A/6 状态文档不再按 region 下发该字段（端到端那一节必须变红）",
+		file: "lib/providers/workbuddy/index.js",
+		from: '\t\t\t...maximumContextWindow === void 0 ? {} : { useMaximumContextWindow: maximumContextWindow }\n',
+		to: "",
+		expect: "端到端：已登录的国际版槽位，状态文档带 useMaximumContextWindow=true 且模型广告 1M 窗口",
+	},
+	{
+		name: "B/6 认证行不再透出凭据来源（空槽位为何显示已登录又看不出了）",
+		file: "lib/panel.js",
+		from: "                ...channel.followDesktop === undefined ? {} : { followDesktop: channel.followDesktop },\n",
+		to: "",
+		expect: "认证页把凭据来源透给前端显示",
+	},
+];
+
+let allOk = true;
+for (const [index, reversal] of REVERSALS.entries()) {
+	const path = join(REPO, reversal.file);
+	const backup = `${path}.reverse-verify-backup`;
+	copyFileSync(path, backup);
+	const original = readFileSync(path, "utf8");
+	const hits = original.split(reversal.from).length - 1;
+	if (hits !== 1) {
+		console.log(`✗ [${index + 1}/${REVERSALS.length}] ${reversal.name}\n    from 在 ${reversal.file} 里出现 ${hits} 次（应为 1）—— 撤回脚本本身失效，先修脚本`);
+		rmSync(backup, { force: true });
+		allOk = false;
+		continue;
+	}
+	writeFileSync(path, original.replace(reversal.from, reversal.to));
+	let result;
+	try {
+		result = spawnSync(NODE, [PROBE], { cwd: REPO, encoding: "utf8" });
+	} finally {
+		copyFileSync(backup, path);
+		rmSync(backup, { force: true });
+	}
+	const out = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+	const redLines = out.split("\n").filter((line) => line.trim().startsWith("✗"));
+	const hit = redLines.some((line) => line.includes(reversal.expect));
+	const restored = readFileSync(path, "utf8") === original;
+	if (result.status === 0) {
+		console.log(`✗ [${index + 1}/${REVERSALS.length}] ${reversal.name}\n    撤回后探针**仍然全绿** —— 断言「${reversal.expect}」没测到东西`);
+		allOk = false;
+	} else if (!hit) {
+		console.log(`✗ [${index + 1}/${REVERSALS.length}] ${reversal.name}\n    探针变红了，但红的不是预期断言。实际红的：\n${redLines.map((l) => `      ${l.trim()}`).join("\n")}`);
+		allOk = false;
+	} else if (!restored) {
+		console.log(`✗ [${index + 1}/${REVERSALS.length}] ${reversal.name}\n    还原后文件与原文不一致（备份/还原有 bug）`);
+		allOk = false;
+	} else {
+		console.log(`✓ [${index + 1}/${REVERSALS.length}] ${reversal.name} → 「${reversal.expect}」变红，文件已逐字还原`);
+	}
+}
+
+console.log(`\nreverse-verify-bugfix: ${allOk ? "全部按预期变红" : "有撤回未被测到（见上）"}`);
+process.exitCode = allOk ? 0 : 1;

@@ -23,13 +23,19 @@ DeepSeek Harness。要点：
 
 `dsh-trae-connect` 把 Trae 订阅里的模型接入 DeepSeek Harness。要点：
 
-- 双产品线（CN / SOLO）共用同一推理端点与 appId，差别在 function 名单、
-  buildId、倍率注册表；全部差异收在 `TRAE_PRODUCTS` 一张表里。
-- 凭据 = 从 Trae 客户端解密导出的明文快照，30 秒轮询 `product` 字段以跟随
-  产品切换（CN↔SOLO 时 function 白名单、目录路径、req_source 必须整套换）。
+- **现役产品只有一个：Trae CN IDE。** 旧的独立客户端 TRAE SOLO CN 已被厂商并进 IDE
+  （SOLO 变成 IDE 里的一个模式），所以默认产品是 `cn`。
+- 两条接法共用同一推理端点与 appId，差别在 function 名单、buildId、倍率注册表；
+  全部差异收在 `TRAE_PRODUCTS` 一张表里。`solo` 那条**逐字冻结**，只为让并入前导出的
+  旧快照继续能跑（手里拿着快照的人没有重导的机会）。
+- 凭据 = 从 Trae 客户端解密导出的明文快照，30 秒轮询 `product` 字段以跟随切换
+  （换产品时 function 白名单、目录路径、req_source 必须整套换）。
 - 推理网关默认 `https://trae-api-cn.mchost.guru`；账号/计费默认
   `https://api.trae.cn`。
 - 思考档位是 `light/high/extra_high`，映射到 pi-ai 的 `low/high/xhigh`。
+- 上下文窗口默认取上游声明的**最大**档（`useMaximumContextWindow`，面板可关）；
+  这条偏好读的是**面板那段 `Config`**，由 `lib/index.js` 经
+  `workbuddy.setPreferences(hubPreferences)` 注入 —— 子模块自己的 `Config` 宿主从不投影。
 
 ## WorkBuddy 工具破损修复（原 repairToolPairing 长注释，2026-10-08）
 

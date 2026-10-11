@@ -1,12 +1,13 @@
 # probes/ 验证脚本
 
-## 确定性脚本（24 个，319 项断言）
+## 确定性脚本（25 个）
 
 不依赖网络、不需要重启 DSH，任何机器 `node probes/verify-xxx.mjs` 就能跑；断言对象是**装着的那份插件**（`_installed.mjs` 按 profile 依赖键定位，包改名不会让整批探针变红）。输出统一是 `N 通过 / M 失败`，退出码即结果。加 `--installed` 则改测 profile 里跑着的那份。
 
 ```bash
-node probes/verify-trae-products.mjs                 # Trae 双产品变体（42）
-node probes/verify-workbuddy-intl.mjs               # WorkBuddy 国际版接入（27，含真实凭据解密）
+node probes/verify-trae-products.mjs                 # Trae 产品变体（56）
+node probes/verify-bugfix-intl-window-and-empty-slot.mjs  # 国际版最大窗口 + 空槽位不显示模型（36）
+node probes/verify-workbuddy-intl.mjs               # WorkBuddy 国际版接入（含真实凭据解密）
 node probes/verify-probe-service.mjs               # 哨兵探查服务（25）
 node probes/verify-trae-effort-chain.mjs             # Trae 档位链路（22）
 node probes/verify-qoder-effort-source.mjs           # Qoder 档位来源合并（21）

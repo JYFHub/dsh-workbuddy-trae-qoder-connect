@@ -1,13 +1,17 @@
 /**
  * Trae「产品变体」离线验证（确定性，不依赖 DSH 重启、默认不打上游）
  *
- * 覆盖 2026-10-07 那次「Trae 渠道从 TRAE SOLO CN 切到 Trae CN」的全部承重逻辑：
- *   1. `resolveProduct` / `activeProduct` 的判定优先级（配置 > 快照声明 > 嗅探 > SOLO 兜底）；
+ * 覆盖 2026-10-07「接入 Trae CN」、2026-10-11「SOLO 独立客户端被并入 Trae CN IDE」
+ * 两次改动的全部承重逻辑：
+ *   1. `resolveProduct` / `activeProduct` 的判定优先级（配置 > 快照声明 > 双向嗅探 > 现役兜底）；
+ *      兜底值这次从 solo 翻成了 cn，所以**存量 SOLO 快照必须靠嗅探命中**，
+ *      否则它们会在某次重启之后突然掉模型、掉倍率、掉档位。
  *   2. `TRAE_PRODUCTS` 两张变体表的字段完整性与内部一致性；
- *   3. `decodeModelId` 的 function 白名单**按产品**放行；
+ *   3. `decodeModelId` 的 function 白名单**按产品**放行（CN 侧只剩 IDE 的三个分组）；
  *   4. 账号写接口的 `req_source` 确实由产品决定（CN=1 / SOLO=2）；
  *   5. 模型目录按产品分文件、per-function 的档位与窗口不丢、
- *      `maxTokens` 不越过任一 dev 窗口（越界会**静默开 Max、5× 计费**）。
+ *      `maxTokens` 不越过任一 dev 窗口（越界会**静默开 Max、5× 计费**）；
+ *   6. 倍率查询集**恰好等于**该产品的目录分组，多一个名字都没有。
  *
  * ⚠️ 第 5 组依赖宿主导出的真实快照（`~/.dsh/trae-cn/models.json` 等）。
  * 没装 Trae 的机器上这些断言**自动跳过**并说明原因 —— 本脚本必须能在任何机器上跑绿，
@@ -91,7 +95,7 @@ for (const [pkg, body] of Object.entries(stubs)) {
 }
 
 const mod = await import(pathToFileURL(path.join(SANDBOX, 'lib/providers/trae/index.js')).href);
-const { resolveProduct, activeProduct, createCatalog, createTraeAccountClient, createTraeClient, decodeModelId, TRAE_PRODUCTS } = mod;
+const { resolveProduct, activeProduct, createCatalog, createTraeAccountClient, createTraeClient, createTraeRateClient, decodeModelId, TRAE_PRODUCTS } = mod;
 
 // ── 断言工具 ────────────────────────────────────────────────────────────────
 let pass = 0;
@@ -108,48 +112,81 @@ const okIf = (label, cond, ready, extra = '') => {
 };
 const CN_CRED = path.join(HOME, 'connect-auth', 'trae.json');
 const CN_CATALOG = path.join(HOME, 'trae-cn', 'models.json');
+/** 并入前那份 SOLO 快照留在本机的备份 —— 只用来复算「老快照认得出吗」这一条。 */
+const SOLO_STASH = path.join(HOME, 'connect-auth', 'trae.json.solo-stash');
 const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return undefined; } };
 const cnCred = readJson(CN_CRED);
 const cnCatalog = readJson(CN_CATALOG);
-const cnReady = cnCred !== undefined && cnCatalog !== undefined;
+const soloStash = readJson(SOLO_STASH);
 
 console.log(`验证目标：${USE_INSTALLED ? '已安装副本' : '仓库源码'}  (${SRC})\n`);
 
-console.log('[1] resolveProduct：判定优先级 = 配置 > 快照 > 嗅探 > SOLO 兜底');
+console.log('[1] resolveProduct：判定优先级 = 配置 > 快照声明 > 双向嗅探 > 现役产品兜底');
 const SYN_CN = { token: 't', product: 'cn', packageType: 'TRAE_CN', appVersionCode: TRAE_PRODUCTS.cn.appVersionCode };
 const SYN_SOLO = { token: 't', product: 'solo', packageType: 'SOLO_CN', appVersionCode: TRAE_PRODUCTS.solo.appVersionCode };
+/** 并入前导出的 v1 快照：没有 product / packageType，只有一个 SOLO 的 buildId。 */
 const SYN_OLD = { token: 't', appVersionCode: TRAE_PRODUCTS.solo.appVersionCode };
 ok('显式声明 cn → cn', resolveProduct({}, SYN_CN).id === 'cn');
 ok('显式声明 solo → solo', resolveProduct({}, SYN_SOLO).id === 'solo');
-ok('老快照（无 product/packageType）→ solo（升级前后行为一致）', resolveProduct({}, SYN_OLD).id === 'solo');
-ok('只有 packageType 也能判 cn', resolveProduct({}, { packageType: 'TRAE_CN' }).id === 'cn');
+/**
+ * 这条是 2026-10-11 翻转 `TRAE_DEFAULT_PRODUCT`（solo → cn）之后**最要紧**的一条：
+ * 老快照不再靠兜底命中，只能靠 buildId 嗅探。嗅探一旦写坏，存量 SOLO 用户就会
+ * 被当成 CN —— 表现是掉模型、掉倍率、思考档位静默失效，而不是任何一条错误。
+ */
+ok('老快照（无 product/packageType，只有 SOLO buildId）→ solo', resolveProduct({}, SYN_OLD).id === 'solo');
+okIf('本机那份真·老快照也认成 solo', resolveProduct({}, soloStash).id === 'solo', soloStash !== undefined,
+  soloStash === undefined ? '' : `buildId=${soloStash.appVersionCode}，无 product 字段`);
+ok('只有 packageType=SOLO_CN 也认 solo', resolveProduct({}, { packageType: 'SOLO_CN' }).id === 'solo');
+ok('只有 packageType=TRAE_CN 也能判 cn', resolveProduct({}, { packageType: 'TRAE_CN' }).id === 'cn');
 ok('只有 buildId 也能判 cn（嗅探）', resolveProduct({}, { appVersionCode: TRAE_PRODUCTS.cn.appVersionCode }).id === 'cn');
 ok('配置可强制覆盖快照', resolveProduct({ product: 'solo' }, SYN_CN).id === 'solo');
 ok('配置乱填 → 忽略、按快照判', resolveProduct({ product: 'nope' }, SYN_CN).id === 'cn');
-ok('空文档 → solo（绝不抛）', resolveProduct({}, undefined).id === 'solo');
+ok('空文档 → cn（兜底 = 现役产品；SOLO 独立客户端已被并入 IDE）', resolveProduct({}, undefined).id === 'cn');
+ok('什么都认不出（buildId 谁都不像）→ cn 且不抛', resolveProduct({}, { appVersionCode: 1 }).id === 'cn');
 
 console.log('\n[2] activeProduct：只读文件，不判 token 过期（未登录也要有答案）');
 ok('从凭据文件判定', activeProduct(() => ({ credentialFile: CN_CRED })) !== undefined);
 ok('配置强制生效', activeProduct({ product: 'solo' }).id === 'solo');
-ok('文件不存在 → solo 且不抛', activeProduct({ credentialFile: path.join(HOME, 'definitely-missing.json') }).id === 'solo');
+ok('文件不存在 → cn 且不抛', activeProduct({ credentialFile: path.join(HOME, 'definitely-missing.json') }).id === 'cn');
 
 console.log('\n[3] TRAE_PRODUCTS 变体表完整性（缺一个字段就是半套配置）');
 for (const p of Object.values(TRAE_PRODUCTS)) {
-  const need = ['id', 'label', 'appDir', 'packageType', 'reqSource', 'appVersionCode', 'appVersion', 'defaultFunction', 'functions', 'rateExtraFunctions', 'catalogGroups', 'fallbackModels', 'catalogSubdir'];
+  const need = ['id', 'label', 'appDir', 'packageType', 'reqSource', 'appVersionCode', 'appVersion', 'defaultFunction', 'functions', 'rateFunctions', 'catalogGroups', 'fallbackModels', 'catalogSubdir'];
   const missing = need.filter((k) => p[k] === undefined || (Array.isArray(p[k]) && p[k].length === 0));
   ok(`${p.id}：字段齐全`, missing.length === 0, missing.join(','));
   ok(`${p.id}：defaultFunction 在自己的白名单里`, p.functions.includes(p.defaultFunction), p.defaultFunction);
   ok(`${p.id}：catalogGroups ⊆ functions（档位键名取得到）`, p.catalogGroups.every((g) => p.functions.includes(g)), p.catalogGroups.filter((g) => !p.functions.includes(g)).join(','));
 }
-ok('两个产品的 buildId 不同（倍率接口按它筛选，相同就静默降级）', TRAE_PRODUCTS.cn.appVersionCode !== TRAE_PRODUCTS.solo.appVersionCode, `${TRAE_PRODUCTS.cn.appVersionCode} / ${TRAE_PRODUCTS.solo.appVersionCode}`);
-ok('两个产品的 reqSource 不同（SOLO=2 / CN=1）', TRAE_PRODUCTS.cn.reqSource === 1 && TRAE_PRODUCTS.solo.reqSource === 2);
+ok('两条产品线的 buildId 不同（倍率接口按它筛选，相同就静默降级）', TRAE_PRODUCTS.cn.appVersionCode !== TRAE_PRODUCTS.solo.appVersionCode, `${TRAE_PRODUCTS.cn.appVersionCode} / ${TRAE_PRODUCTS.solo.appVersionCode}`);
+ok('两条产品线的 reqSource 不同（SOLO=2 / CN=1）', TRAE_PRODUCTS.cn.reqSource === 1 && TRAE_PRODUCTS.solo.reqSource === 2);
 ok('SOLO 的兜底名单保持历史 7 条（逐字不变）', TRAE_PRODUCTS.solo.fallbackModels.length === 7, `n=${TRAE_PRODUCTS.solo.fallbackModels.length}`);
 ok('SOLO 的目录子目录仍是 trae/（旧快照不用重导）', TRAE_PRODUCTS.solo.catalogSubdir === 'trae');
 ok('CN 用独立的 trae-cn/（不与 SOLO 目录混）', TRAE_PRODUCTS.cn.catalogSubdir === 'trae-cn');
+/**
+ * SOLO 已被厂商并进 IDE —— 名字上必须说清楚，否则面板里那条 chip 还在宣传一个
+ * 装不回来的产品。这是 2026-10-11「描述与代码一起改」的那一半。
+ */
+ok('SOLO 的 label 写明已并入 IDE', TRAE_PRODUCTS.solo.label.includes('已并入'), TRAE_PRODUCTS.solo.label);
+/**
+ * CN 侧三个身份（可推理白名单 / 倍率查询键 / 目录分组）在代码里是**同一份常量**。
+ *
+ * 钉死成 IDE 的三个分组，就是钉死这次清理：把 SOLO 那 4 个槽位名或 `multimodal` /
+ * `refactor` 加回来，这里立刻红。依据是实测 —— 11 个名字与 3 个名字对目录的倍率
+ * 覆盖都是 24/24（2026-10-11，同一份凭据，250 ms vs 962 ms），而档位与窗口数据
+ * 只有这三个分组有，多出来的名字只会带来静默丢档位。
+ */
+ok('CN 白名单恰好是 IDE 的三个分组', TRAE_PRODUCTS.cn.functions.join() === 'solo_agent,chat_v3,builder_v3', TRAE_PRODUCTS.cn.functions.join(','));
+ok('CN 的倍率查询集 / 目录分组与白名单同源', ['rateFunctions', 'catalogGroups']
+  .every((k) => TRAE_PRODUCTS.cn[k].join() === TRAE_PRODUCTS.cn.functions.join()));
+ok('SOLO 整条冻结：白名单 9 个、倍率查询集 11 个（历史逐字）',
+  TRAE_PRODUCTS.solo.functions.length === 9 && TRAE_PRODUCTS.solo.rateFunctions.length === 11,
+  `functions=${TRAE_PRODUCTS.solo.functions.length} rateFunctions=${TRAE_PRODUCTS.solo.rateFunctions.length}`);
 
 console.log('\n[4] decodeModelId：function 白名单按产品');
 ok('CN 放行 solo_agent', decodeModelId('glm-5.3@solo_agent', 'chat_v3', TRAE_PRODUCTS.cn.functions).functionName === 'solo_agent');
 ok('CN 拒绝 solo 专有 solo_coder → 退回默认', decodeModelId('glm-5.3@solo_coder', 'solo_agent', TRAE_PRODUCTS.cn.functions).functionName === 'solo_agent');
+ok('CN 也拒绝 solo_work_lite（快照里没有它的档位/窗口数据，放行=静默丢档位）',
+  decodeModelId('glm-5.3@solo_work_lite', 'solo_agent', TRAE_PRODUCTS.cn.functions).functionName === 'solo_agent');
 ok('SOLO 放行 solo_coder', decodeModelId('glm-5.3@solo_coder', 'solo_work_lite', TRAE_PRODUCTS.solo.functions).functionName === 'solo_coder');
 ok('无 @ 后缀 → 用默认 function', decodeModelId('glm-5.3', 'solo_agent', TRAE_PRODUCTS.cn.functions).functionName === 'solo_agent');
 ok('未知后缀 → 退回默认 function，且模型名保持原样（不静默剥后缀，让上游报 model is unknown）', (() => {
@@ -178,11 +215,54 @@ globalThis.fetch = async (url, init) => {
   return new Response('event:output\ndata:{"response":"hi"}\n\nevent:done\ndata:{"finish_reason":"stop"}\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
 };
 await createTraeClient({}).chatStream(credFor(TRAE_PRODUCTS.cn), { model: 'glm-5.3', function: 'solo_agent', messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }] }, undefined);
-globalThis.fetch = realFetch;
 ok('端点 = /api/agent/v3/llm_utils_chat', /\/api\/agent\/v3\/llm_utils_chat$/.test(sent[0]?.url ?? ''), sent[0]?.url);
 ok('function 原样透传', sent[0]?.body?.function === 'solo_agent');
 
-console.log('\n[7] 真实快照（宿主导出后才有；没装 Trae 的机器自动跳过）');
+/**
+ * 倍率查询集**不传参数**时取自哪里 —— 这一组是这次清理的核心。
+ *
+ * 上游对 `functions` 长度的延迟是**非线性**的（实测 9 个名字一批能回、12 个整条被掐住），
+ * 而目录里每个模型的倍率只要被查过一次就够了，所以名单必须**不多不少**：
+ * 少了漏价，多的那些名字只会带回不在目录里的内部模型（refactor_scoper 等）。
+ * 这里用桩 fetch 抓**实际发出去的 body**，比读源码文本强：改错顺序、多塞名字、
+ * 把 CN 的名单发给 SOLO，都会立刻红。
+ */
+console.log('\n[7] 倍率查询集 = 该产品的目录分组（桩 fetch）');
+const RATE_DOC = JSON.stringify({
+  function_configs: [{
+    function: 'solo_agent',
+    config_info_list: [{
+      config_name: 'glm-5.3',
+      display_contact_config: JSON.stringify({ consumption_rate: JSON.stringify({ data: { rate: 3 } }) }),
+    }],
+  }],
+});
+const batches = [];
+globalThis.fetch = async (_url, init) => {
+  batches.push(JSON.parse(init.body).functions);
+  return new Response(RATE_DOC, { status: 200, headers: { 'Content-Type': 'application/json' } });
+};
+const rateClient = createTraeRateClient({});
+await rateClient.fetchRates({ token: 't', appVersionCode: 1, product: TRAE_PRODUCTS.cn });
+ok('CN：一次请求，名单恰好等于 catalogGroups', batches.length === 1 && batches[0].join() === TRAE_PRODUCTS.cn.catalogGroups.join(), JSON.stringify(batches));
+await rateClient.fetchRates({ token: 't', appVersionCode: 1, product: TRAE_PRODUCTS.solo });
+const soloBatches = batches.slice(1);
+ok('SOLO：历史 11 个名字逐字保留', soloBatches.flat().join() === TRAE_PRODUCTS.solo.rateFunctions.join(), JSON.stringify(soloBatches.flat()));
+ok('SOLO：11 个名字被 RATE_QUERY_CHUNK=9 切成两批（分批这条路径还活着）', soloBatches.length === 2, `批次数=${soloBatches.length}`);
+/**
+ * 不传 functions 时的兜底要认得**快照那种字符串形态**的 product。
+ * 探针和排查脚本手上只有 `product: "cn"`，写坏就是 TypeError，而且报不出根因。
+ */
+let strOk = true;
+try {
+  await rateClient.fetchRates({ token: 't', appVersionCode: 1, product: 'solo' });
+} catch {
+  strOk = false;
+}
+ok('字符串形态的 product 也能取到默认名单（不抛）', strOk);
+globalThis.fetch = realFetch;
+
+console.log('\n[8] 真实快照（宿主导出后才有；没装 Trae 的机器自动跳过）');
 okIf('CN 快照判成 cn', cnCred?.product === 'cn', cnCred !== undefined, cnCred ? `label=${resolveProduct({}, cnCred).label}` : '');
 okIf('CN 快照的 reqSource=1', cnCred?.reqSource === 1, cnCred !== undefined);
 /**
@@ -210,15 +290,41 @@ okIf('maxTokens 不越过任一分组 dev 窗口（越界=静默开 Max、5× �
   const devs = Object.values(m.contextWindowByGroup ?? {}).map((t) => t?.dev).filter((n) => Number.isFinite(n) && n > 0);
   return devs.length === 0 || m.maxTokens <= Math.min(...devs);
 }), cnCatalog !== undefined);
+/**
+ * 目录里的分组键必须全落在 CN 的白名单内 —— 这是 [3]/[4] 那两条收口的**反向验证**：
+ * 如果哪天上游在 `model_list_map` 里新增一个分组、导出脚本把它收了进来，而白名单
+ * 没跟着加，这些模型的档位与窗口就会静默失效。真出现时这条会先红，而不是等到
+ * 用户报告"档位没用"。
+ */
+okIf('目录里出现的分组全在白名单内', (cnCatalog?.models ?? []).every((m) => [...new Set([
+  ...Object.keys(m.contextWindowByGroup ?? {}),
+  ...Object.keys(m.reasoningByGroup ?? {}),
+])].every((g) => TRAE_PRODUCTS.cn.functions.includes(g))), cnCatalog !== undefined,
+(() => {
+  const groups = new Set((cnCatalog?.models ?? []).flatMap((m) => [...Object.keys(m.contextWindowByGroup ?? {}), ...Object.keys(m.reasoningByGroup ?? {})]));
+  return [...groups].join(',');
+})());
 const g53 = (cnCatalog?.models ?? []).find((m) => m.id === 'glm-5.3');
 okIf('glm-5.3 带 per-function 档位与窗口', !!g53?.reasoningByGroup?.solo_agent && !!g53?.contextWindowByGroup?.solo_agent, cnCatalog !== undefined);
 okIf('CN 独占模型 4 个全在', ['glm-5.3-flash', 'glm-5.3-flashx', 'kimi-k2.8-preview', 'qwen3.8-flash'].every((id) => (cnCatalog?.models ?? []).some((m) => m.id === id)), cnCatalog !== undefined);
 okIf('快照的 defaultFunction 与变体表一致', cnCatalog?.defaultFunction === TRAE_PRODUCTS.cn.defaultFunction, cnCatalog !== undefined, cnCatalog?.defaultFunction);
-okIf('catalog 按产品分文件：SOLO 快照 → SOLO 目录', (() => {
-  const soloCred = path.join(HOME, 'connect-auth', 'trae.json.solo-stash');
-  if (!fs.existsSync(soloCred)) return undefined;
-  return createCatalog({ config: () => ({ credentialFile: soloCred }) }).source() !== 'fallback';
-})() !== false, readJson(path.join(HOME, 'connect-auth', 'trae.json.solo-stash')) !== undefined);
+/**
+ * 目录按产品分文件 —— 两条一起判，比只判「加载成功」强得多。
+ *
+ * 只判 `source() !== 'fallback'` 是个**假绿**：本机上两份目录都在，嗅探一旦写坏，
+ * SOLO 快照会去读 `trae-cn/models.json`，照样非空、照样不抛，探针还是绿的。
+ * 所以这里比的是**读出来的模型 id 列表等于哪一份文件**。
+ */
+const SOLO_CATALOG = path.join(HOME, 'trae', 'models.json');
+const soloCatalog = readJson(SOLO_CATALOG);
+const idsOf = (cat) => (cat?.models ?? []).map((m) => m.id).join();
+const readySolo = soloStash !== undefined && soloCatalog !== undefined;
+okIf('SOLO 快照读 trae/models.json（不是 trae-cn/）',
+  createCatalog({ config: () => ({ credentialFile: SOLO_STASH }) }).current().map((m) => m.id).join() === idsOf(soloCatalog),
+  readySolo, `n=${soloCatalog?.models?.length}`);
+okIf('CN 快照读 trae-cn/models.json',
+  createCatalog({ config: () => ({ credentialFile: CN_CRED }) }).current().map((m) => m.id).join() === idsOf(cnCatalog),
+  cnCred !== undefined && cnCatalog !== undefined, `n=${cnCatalog?.models?.length}`);
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败${skipped > 0 ? ` / ${skipped} 跳过（无本机快照）` : ''}`);
 process.exit(fail === 0 ? 0 : 1);

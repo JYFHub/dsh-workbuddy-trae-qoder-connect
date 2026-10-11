@@ -2,13 +2,16 @@
 /**
  * export-trae-plain.mjs —— 把 Trae 桌面端的登录态与模型目录导出为 dsh-connect 可读的明文快照。
  *
- * **两个产品都支持**（`--app` 选择，默认自动挑）：
+ * **在用的产品只有一个：Trae CN IDE。** `--app` 仍接受两个值，但 `solo` 是历史兼容：
  *
- *   cn    Trae CN —— IDE 版（`product.json: packageType=TRAE_CN`，win32NameVersion=TraeCode CN）
- *                 模型更多更全：比 SOLO 多 glm-5.3-flash / glm-5.3-flashx / kimi-k2.8-preview /
- *                 qwen3.8-flash 等，且 solo_agent 分组里 11 个模型档位三档齐全、上下文可扩到 1M。
- *   solo  TRAE SOLO CN —— 办公向 harness（旧称 TraeWork CN，`packageType=SOLO_CN`）。
- *                 本脚本的历史唯一目标，行为逐字保留。
+ *   cn    Trae CN —— IDE 版（`product.json: packageType=TRAE_CN`，win32NameVersion=TRAE CN）
+ *                 唯一在用的产品，也是默认值。模型最全（24 个），solo_agent 分组里
+ *                 档位与上下文窗口数据齐全。
+ *   solo  TRAE SOLO CN —— **已被厂商并入 Trae CN IDE**（2026-10-11 实测：注册表里
+ *                 `TRAE SOLO CN` 那条已消失，独立客户端目录也空了；SOLO 现在只是 IDE
+ *                 里的一个模式）。本脚本保留这个条目只为让老机器上那份 SOLO 快照
+ *                 （`~/.dsh/trae/`）继续能跑、以及尚未迁移的机器照旧可导，行为逐字保留。
+ *                 新用户不要用它 —— 用默认的 cn。
  *
  * 为什么需要它：
  *   Trae 的凭据在宿主机的
@@ -16,7 +19,7 @@
  *     macOS   : ~/Library/Application Support/<产品目录>/User/globalStorage/storage.json
  *   里以 byteCrypto 信封（`dGMF` 前缀）存储，解密逻辑是**纯 JS**（见 trae-vault.mjs），
  *   但 DSH 跑在容器里根本看不到这个路径。因此由宿主侧解密，写明文快照到
- *     ~/.dsh/trae-cn/{credential.json,models.json}   ← cn 产品（本次切换后的默认）
+ *     ~/.dsh/trae-cn/{credential.json,models.json}   ← cn 产品（默认，也是唯一在用的）
  *     ~/.dsh/trae/{credential.json,models.json}      ← solo 产品（历史路径，逐字不变）
  *     ~/.dsh/connect-auth/trae.json                  ← 插件真正读的凭据（两种产品都镜像一份）
  *   （`~/.dsh` 已 bind mount 成 `/root/.dsh`）；插件只读这几份快照，绝不碰桌面 App 的目录。
@@ -26,10 +29,10 @@
  *   Trae 同样是宿主解密，但算法完全自包含 —— 所以这里直接复用 trae-vault.mjs 的 unseal()。
  *
  * 用法：
- *   node scripts/export-trae-plain.mjs                  # 自动选产品（有 Trae CN 就用 CN）
- *   node scripts/export-trae-plain.mjs --app solo       # 指定导 SOLO
- *   node scripts/export-trae-plain.mjs --app cn         # 指定导 Trae CN
- *   node scripts/export-trae-plain.mjs --list           # 只列两个产品各人的登录态，不写文件
+ *   node scripts/export-trae-plain.mjs                  # 自动挑（有 Trae CN IDE 就用它）
+ *   node scripts/export-trae-plain.mjs --app cn         # 指定导 Trae CN IDE（推荐）
+ *   node scripts/export-trae-plain.mjs --app solo       # 只在旧 SOLO 客户端还在时有用
+ *   node scripts/export-trae-plain.mjs --list           # 只列各产品的登录态，不写文件
  *   node scripts/export-trae-plain.mjs --check          # 体检当前要导的那份，不写文件
  *   node scripts/export-trae-plain.mjs --out DIR        # 自定义输出目录（此时不再镜像到 connect-auth）
  *
@@ -43,14 +46,18 @@ import { spawnSync } from 'node:child_process';
 import { unseal } from './trae-vault.mjs';
 
 /**
- * 两个 Trae 产品的常量表 —— 与插件侧 `providers/trae/index.js` 的 `TRAE_PRODUCTS`
+ * Trae 产品常量表 —— 与插件侧 `providers/trae/index.js` 的 `TRAE_PRODUCTS`
  * 一一对应，**两边都要改的时候记得同步**（这份是宿主导出用的事实源，那份是容器消费用的）。
  *
+ * 在用的产品只有 `cn`；`solo` 是并入前那份历史兼容条目（见文件头）。
+ *
  * 每一项都不是凭猜测填的：
- *   - `dir`            注册表/开始菜单里两个产品各自的数据根目录（实测本机并存）。
+ *   - `dir`            注册表/开始菜单里该产品的数据根目录。SOLO 那条现在通常已不存在
+ *                      （独立客户端被并入 IDE 后目录被清空），留着只为旧机器。
  *   - `packageType`    各自 `product.json` 的字面值 —— 它决定签到 `req_source`。
  *   - `buildId`        各自 `product.json` 的 `buildId`，也是倍率接口 `X-Ide-Version-Code`
  *                      的**筛选键**：用错值不报错，只回一份没有 function_configs 的空壳。
+ *                      这两个常量只是「读不到 product.json」时的兜底，正常运行会现读覆盖。
  *   - `reqSource`      App 侧 `out/main.js` 的 `eb()` 发 `{req_source: a}`，
  *                      `a = Pr(product) ? 2 : 1`，`Pr` 判定 `packageType ∈ {SOLO_*}`。
  *                      CN 实测 1/2 都放行（见 2026-10-07 探测），但仍按 App 自己的取值填 1。
@@ -67,20 +74,33 @@ const APPS = {
     dir: 'Trae CN',
     packageType: 'TRAE_CN',
     reqSource: 1,
-    buildId: 1232067209986,
-    appVersion: '3.3.104',
+    buildId: 1238630385922,
+    appVersion: '3.4.2',
     /** 推理网关与账号网关都从 product.json 现读，这里只放兜底值。 */
     gateway: 'https://trae-api-cn.mchost.guru',
     accountBase: 'https://api.trae.cn',
-    /** SOLO 的 function 名在 CN 上同样可用（同 appId），所以默认槽位用 CN 自己的。 */
+    /** 默认槽位用 IDE 自己的那三个分组之一（同 appId，三组都能推理）。 */
     defaultFunction: 'solo_agent',
     catalogGroups: ['solo_agent', 'chat_v3', 'builder_v3'],
+    /**
+     * `model_list_map` 键名分隔符的优先顺序：IDE 自己那行在前。
+     * 旧 SOLO 行只作为「这台机器只有它」时的兜底（见 readModelGroups 的函数头）。
+     */
+    mapKeySeparators: ['_', ':'],
     /** 快照落盘子目录（$DSH_HOME 下）。 */
     outSubdir: 'trae-cn',
   },
+  /**
+   * TRAE SOLO CN 作为**独立客户端已被并入 Trae CN IDE**（2026-10-11 本机实测：注册表里
+   * `TRAE SOLO CN` 那条已消失，只剩 `TRAE CN`，且安装位置是 `D:\TRAE SOLO CN\Trae CN\`
+   * 这个历史目录名；独立客户端的 exe 已不在）。这个条目留着只为两件事：
+   *   1. 老用户手里那份 SOLO 快照（`~/.dsh/trae/`）继续能跑，不用重导；
+   *   2. 尚未迁移的机器（独立客户端还在）照旧可导。
+   * 新用户直接 `--app cn` 即可 —— IDE 界面里看到的那排模型就是全部。
+   */
   solo: {
     id: 'solo',
-    label: 'TRAE SOLO CN（TraeWork）',
+    label: 'TRAE SOLO CN（已并入 Trae CN IDE）',
     dir: 'TRAE SOLO CN',
     packageType: 'SOLO_CN',
     reqSource: 2,
@@ -93,13 +113,15 @@ const APPS = {
       'solo_agent_lite', 'solo_agent_remote', 'solo_coder', 'solo_work_lite', 'solo_work_remote',
       'solo_design_lite', 'solo_design_remote',
     ],
+    /** 反过来的优先顺序：旧独立客户端写的是冒号那行，IDE 行只作兜底。 */
+    mapKeySeparators: [':', '_'],
     outSubdir: 'trae',
   },
 };
 
 /**
  * ai-agent 侧固定的 App 身份（product.json 的 bootConfig.appId，非账号级）。
- * 实测两个产品的 bootConfig.agent/ckg/cue/hub.appId 都是这一串，所以留一个常量，
+ * 实测两个数据目录里的 bootConfig.agent/ckg/cue/hub.appId 都是这一串，所以留一个常量，
  * 但导出时会**优先用 product.json 里读到的值**，这里只是读不到时的兜底。
  */
 const FALLBACK_APP_ID = '6eefa01c-1036-4c7e-9ca5-d891f63bfcd8';
@@ -107,17 +129,17 @@ const FALLBACK_APP_ID = '6eefa01c-1036-4c7e-9ca5-d891f63bfcd8';
 /**
  * 服务端注册过的 function（倍率查询用；CN/SOLO 各一张）。
  *
- * ⚠️ 别为了「覆盖率」往里堆名字：实测上游对 `functions` 长度的延迟是非线性的
+ * `cn` 那张是**实际在用**的查询集，与插件侧 `TRAE_PRODUCTS.cn.rateFunctions` 一致。
+ * `solo` 那张是并入前那份历史查询集（9 个可推理名 + `assistant` / `builder`），
+ * 逐字冻结 —— 只服务手里拿着旧快照、没法重导的人。
+ *
+ * ⚠️ 别为了「覆盖率」往 `cn` 里堆名字：实测上游对 `functions` 长度的延迟是非线性的
  * （见下面 RATE_CHUNK 的注释），而且倍率对同一模型跨 function 取值一致 ——
- * 多查只是多花一次往返，不会多出一个模型的价。所以这张表 = 该产品的可推理
- * function + 两个「只在注册表里出现」的名字，与插件侧
- * `TRAE_PRODUCTS[*].functions + rateExtraFunctions` 保持一致。
+ * 多查只是多花一次往返，不会多出一个模型的价。所以这张表 = 该产品可推理的
+ * function 全集，与插件侧的 `rateFunctions` 保持一致。
  */
 const FUNCTIONS_BY_APP = {
-  cn: [
-    'solo_agent', 'chat_v3', 'builder_v3', 'solo_agent_lite', 'solo_work_lite',
-    'solo_agent_remote', 'solo_work_remote', 'multimodal', 'refactor', 'assistant', 'builder',
-  ],
+  cn: ['solo_agent', 'chat_v3', 'builder_v3'],
   solo: [
     'solo_work_lite', 'solo_agent_lite', 'solo_coder', 'solo_work_remote', 'solo_agent_remote',
     'solo_design_lite', 'solo_design_remote', 'multimodal', 'refactor', 'assistant', 'builder',
@@ -144,7 +166,7 @@ function appSupportDir(dirName) {
   return path.join(os.homedir(), 'Library', 'Application Support', dirName);
 }
 
-/** 该产品的宿主安装是否存在（装了才有得导）。 */
+/** 该数据目录里是否有可导的登录态（有才导得出来）。 */
 function installed(app) {
   return fs.existsSync(path.join(appSupportDir(app.dir), 'User', 'globalStorage', 'storage.json'));
 }
@@ -157,10 +179,10 @@ function installed(app) {
  * 找不到时（例如装在非默认位置且注册表没有 InstallLocation）退回表里的值，
  * 并在日志里点名这一点。
  *
- * ⚠️ 必须按 `packageType` **核对**再采纳：实测有人的 Trae CN 装在
- * `<盘符>\TRAE SOLO CN\Trae CN` 这种嵌套位置（安装器把 IDE 放进了 SOLO 的目录里），
- * 只按路径猜会把 SOLO 的 product.json 当成 CN 的，buildId 立刻张冠李戴。
- * 代码里那几条 `D:\` 候选就是为了覆盖这种「非系统盘安装」，不是特定机器专属。
+ * ⚠️ 必须按 `packageType` **核对**再采纳：实测本机的 Trae CN 就装在
+ * `D:\TRAE SOLO CN\Trae CN` 这种嵌套位置（并入后沿用了旧目录名），只按路径猜会把
+ * 别的 product.json 当成 CN 的，buildId 立刻张冠李戴。代码里那几条 `D:\` 候选
+ * 就是为了覆盖这种「非系统盘 / 嵌套安装」，不是特定机器专属。
  */
 function readProductJson(app) {
   /**
@@ -284,15 +306,34 @@ function jwtPayload(token) {
  * 该文件是普通 SQLite（非 SQLCipher），但 Node 读页头 + 扫描不可靠 —— 这里
  * 改用 python 的 sqlite3；不可用时退化为「无目录」，插件仍能靠内置兜底模型工作。
  *
- * ⚠️ 键的分隔符**两个产品不一样**（实测）：
- *   TRAE SOLO CN → `<uid>:AI.agent.model.model_list_map`
- *   Trae CN      → `<uid>_AI.agent.model.model_list_map`
- * 所以这里用 LIKE 匹配 `<uid>%…`，而不是拼死一个冒号 —— 否则 CN 侧永远查不到行，
- * 表现是「导出成功但 models.json 空着」，插件静默退回 7 个兜底模型。
+ * ## 键的分隔符，以及 2026-10-11 之后必须精确匹配的原因
+ *
+ * 同一个账号在一个库里可能同时有**两行**目录，只差分隔符：
+ *
+ *   `<uid>_AI.agent.model.model_list_map`   IDE 自己那份（当前界面看到的就是它）
+ *   `<uid>:AI.agent.model.model_list_map`   旧的 TRAE SOLO CN 客户端留下的
+ *
+ * TRAE SOLO CN 已并入 Trae CN IDE（2026-10-11 本机实测：独立客户端的注册表项与 exe
+ * 都没了，只剩 `Trae CN.exe`，而 IDE 的库里两行并存）。所以**这不是"两个产品各一行"，
+ * 是"一个产品 + 它吸收掉的旧数据"**。
+ *
+ * ⚠️ 早先用 `LIKE '<uid>%…'` + `fetchone()`，而 `%` 同时匹配 `_` 和 `:` —— 迁移前每台
+ * 机器最多命中一行，所以看不出问题；迁移后同一个库里两行并存，**取到哪行取决于 SQLite
+ * 的扫描顺序**。后果是 `--app cn` 也可能拿到旧表：表现不是报错，而是模型列表静默换一批
+ * （旧分组的名字混进来，档位与上下文窗口也按旧分组记），没人会想到是导出的锅。
+ *
+ * 所以这里按**精确等值**查，并按产品定优先顺序：
+ *   cn   → 只要 IDE 那一行（界面看到的就是它）；查不到才退回旧行（兼容从未见过
+ *          下划线键名的历史构建）
+ *   solo → 先旧行（独立 SOLO 客户端只剩它），再退 IDE 行
+ *
+ * 分隔符在 SQL 里也**不能**用 LIKE：`_` 本身就是"任意单字符"通配。
  */
 function readModelGroups(app, uid) {
   const vscdb = path.join(appSupportDir(app.dir), 'User', 'globalStorage', 'state.vscdb');
   if (!fs.existsSync(vscdb)) { log(`  ⚠ 找不到 state.vscdb: ${vscdb}`); return undefined; }
+  /** 该产品的键名优先顺序（精确匹配，见函数头）。 */
+  const candidateKeys = (app.mapKeySeparators ?? ['_']).map((sep) => `${uid}${sep}AI.agent.model.model_list_map`);
   /**
    * ⚠️ 必须自己写 UTF-8 字节，不能靠 print。
    *
@@ -305,18 +346,29 @@ function readModelGroups(app, uid) {
   const py = String.raw`
 import sqlite3, json, sys, urllib.parse, os
 con = sqlite3.connect("file:%s?mode=ro" % urllib.parse.quote(sys.argv[1]), uri=True)
-like = sys.argv[2] + "%AI.agent.model.model_list_map"
-row = con.execute("SELECT value FROM ItemTable WHERE key LIKE ?", (like,)).fetchone()
-sys.stdout.buffer.write((row[0] if row else "").encode("utf-8"))
+keys = json.loads(sys.argv[2])
+value = ""
+hit = ""
+for key in keys:
+    row = con.execute("SELECT value FROM ItemTable WHERE key = ?", (key,)).fetchone()
+    if row and row[0]:
+        value, hit = row[0], key
+        break
+sys.stdout.buffer.write(json.dumps({"hit": hit, "value": value}).encode("utf-8"))
 `;
   // Python 可执行名按平台：macOS/Linux 通常是 python3，Windows 上通常只有 python。
   const python = process.platform === 'win32' ? 'python' : 'python3';
-  const r = spawnSync(python, ['-c', py, vscdb, String(uid)], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+  const r = spawnSync(python, ['-c', py, vscdb, JSON.stringify(candidateKeys)], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
   if (r.status !== 0 || !r.stdout?.trim()) {
     if (r.stderr?.trim()) log('  ⚠ python 报错:', r.stderr.trim().split('\n').pop());
     return undefined;
   }
-  try { return JSON.parse(r.stdout); } catch { return undefined; }
+  try {
+    const picked = JSON.parse(r.stdout);
+    // 命中哪一行要说出来：迁移后两行并存，静默选错行的代价见函数头。
+    log('  model_list_map:', picked.hit ? picked.hit.replace(String(uid), '<uid>') : '（两行都没有）');
+    return picked.value ? JSON.parse(picked.value) : undefined;
+  } catch { return undefined; }
 }
 
 function readModels(app, uid) {
@@ -583,10 +635,11 @@ const checkOnly = args.includes('--check');
 const listOnly = args.includes('--list');
 
 /**
- * 选产品：显式 `--app` > 自动（装了 Trae CN 就用 CN，否则退回 SOLO）。
+ * 选产品：显式 `--app` > 自动（装了 Trae CN IDE 就用它，否则退回历史 SOLO 目录）。
  *
- * 自动顺序把 CN 放前面是这次的需求本身：用户要的就是「接 IDE 版、别再走 SOLO」。
- * 两个都没装则直接报错退出，不写任何文件。
+ * 现役只有 CN 一个产品，所以"自动"实际上就是 CN；SOLO 那一步只在还没迁移的老机器上
+ * 才可能命中（独立客户端被并入 IDE 后，它的数据目录通常已经空了）。
+ * 两个都探不到则直接报错退出，不写任何文件。
  */
 function pickApp() {
   if (appKeyRaw === 'cn' || appKeyRaw === 'solo') return APPS[appKeyRaw];
@@ -596,10 +649,10 @@ function pickApp() {
 }
 
 if (listOnly) {
-  log('本机 Trae 产品:');
+  log('本机 Trae 数据目录:');
   for (const app of Object.values(APPS)) {
     const storage = path.join(appSupportDir(app.dir), 'User', 'globalStorage', 'storage.json');
-    if (!fs.existsSync(storage)) { log(`  ${app.id.padEnd(5)} ${app.label.padEnd(26)} 未安装（${storage}）`); continue; }
+    if (!fs.existsSync(storage)) { log(`  ${app.id.padEnd(5)} ${app.label.padEnd(26)} 无登录态（${storage}）`); continue; }
     try {
       const s = readCredential(app);
       const payload = jwtPayload(s.token);
@@ -611,13 +664,14 @@ if (listOnly) {
     }
   }
   const picked = pickApp();
-  log(`\n--app 省略时的默认选择: ${picked ? picked.id + '（' + picked.label + '）' : '无（两个产品都没装）'}`);
+  log(`\n--app 省略时的默认选择: ${picked ? picked.id + '（' + picked.label + '）' : '无（两个数据目录都没有登录态）'}`);
+  log('注：`solo` 那一行是并入前遗留的数据目录；它可能还存着一份旧 token（到期日不同），导出来的就是并入前那份快照。');
   process.exit(0);
 }
 
 const app = pickApp();
 if (app === undefined) {
-  log('两个 Trae 产品都没装（Trae CN / TRAE SOLO CN），无法导出。');
+  log('找不到可导出的 Trae 登录态：Trae CN IDE 与历史 TRAE SOLO CN 目录里都没有 storage.json。');
   process.exit(2);
 }
 
@@ -735,7 +789,7 @@ log('已写入 (0600):', modelsPath);
  * 所以：outDir 就是这个产品的默认输出目录时，额外镜像一份到 connect-auth/；
  * 若用户用 --out 指定了别处，则尊重 --out，不再多写。
  *
- * ⚠️ connect-auth/trae.json 是**两个产品共用**的一个文件 —— 这正是「切换」的机关：
+ * ⚠️ connect-auth/trae.json 是**两条产品线共用**的一个文件 —— 这正是「切换」的机关：
  * 最后一次导出者赢。插件靠文件里的 `product` 字段跟着换整套接线，所以不会
  * 出现「CN 的 token 配 SOLO 的 function」。想看当前生效的是哪个，读这个文件的 `product`，
  * 或看 `$DSH_HOME/.trae-connect-state.json` 的 `product` / `productLabel`。

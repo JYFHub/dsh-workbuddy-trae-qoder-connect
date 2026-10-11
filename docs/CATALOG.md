@@ -34,7 +34,7 @@ pi-ai 键空间 `off < minimal < low < medium < high < xhigh < max` 排序。
 ## Trae
 
 来源：宿主跑 `scripts/export-trae-plain.mjs`（读 state.vscdb 的
-`{uid}:AI.agent.model.model_list_map`）→ `~/.dsh/trae/models.json`。
+`{uid}_AI.agent.model.model_list_map`，即 IDE 自己那份）→ `~/.dsh/trae-cn/models.json`。
 
 | 字段（raw 内） | 含义 | 用途 |
 |---|---|---|
@@ -44,16 +44,23 @@ pi-ai 键空间 `off < minimal < low < medium < high < xhigh < max` 排序。
 | `context_window_tokens` | `{dev, max}`（核心） | `contextWindowByGroup`；max 存在即 Max 档窗口 |
 | `reasoning_effort_config` | **档位声明**（按 function） | `reasoningByGroup`；`support_thinking` + `options` |
 
-⚠️ 同一模型在 `solo_agent_lite` 有档位有 1M，在 `solo_work_lite` 可能全没有——
+⚠️ 同一模型在 `solo_agent` 有档位有 1M，换一个分组可能全没有——
 导出脚本按组保留三张表，插件按**当前 function** 取。改了导出脚本必须重跑并重启 DSH。
 
-⚠️ **两个产品的槽位名不同**，核对前先确认当前产品，否则会拿 SOLO 的槽位名去查 CN 的快照，
-得出"这个模型没档位"的错误结论：
+⚠️ **核对前先确认快照出自哪个数据目录。** 槽位名是按目录分的，拿旧 SOLO 的槽位名去查
+IDE 的快照会得出"这个模型没档位"的错误结论：
 
-| 产品 | 槽位名 |
-|---|---|
-| SOLO（`--app solo`，目录 `~/.dsh/trae/models.json`） | `solo_agent_lite` / `solo_agent_remote` / `solo_work_lite` / `solo_coder` … |
-| CN（`--app cn`，目录 `~/.dsh/trae-cn/models.json`） | `solo_agent` / `chat_v3` / `builder_v3` |
+| 数据目录 | 槽位名 | 快照路径 |
+|---|---|---|
+| IDE（`--app cn`，**现役，也是默认**） | `solo_agent` / `chat_v3` / `builder_v3` | `~/.dsh/trae-cn/models.json` |
+| 并入前的 SOLO（`--app solo`，历史） | `solo_agent_lite` / `solo_agent_remote` / `solo_work_lite` / `solo_coder` … | `~/.dsh/trae/models.json` |
+
+> TRAE SOLO CN 作为独立客户端已被并进 Trae CN IDE（2026-10-11 实测），所以第二行只是
+> 历史兼容：老快照继续能跑，新用户不会再有这个目录。
+
+⚠️ 同一个 `state.vscdb` 里现在**两行并存**（`{uid}_AI…` = IDE，`{uid}:AI…` = 并入前的
+SOLO）。导出脚本按**精确等值**查、并按产品定优先顺序；用 `LIKE '{uid}%…'` 会让"取到哪行"
+取决于 SQLite 扫描顺序 —— 后果不是报错，而是模型列表静默换一批。
 
 **区分两种"没有档位"**（诊断"为什么这个模型没有档位"必看）：
 
@@ -78,7 +85,7 @@ Trae 用 light/high/extra_high 映射）。`off` 在 Qoder/Trae 均不作为线�
 
 ## 半手动核对 SOP（给 AI 的操作单）
 
-1. 拉目录：Qoder 用 `qoder-raw-catalog.mjs`；Trae 重跑 `export-trae-plain.mjs`。
+1. 拉目录：Qoder 用 `qoder-raw-catalog.mjs`；Trae 重跑 `export-trae-plain.mjs`（默认 `--app cn`）。
 2. 对照插件状态文档：`GET /plugins/dsh-qoder-connect/status` 的 `probe` 段。
 3. 发现"声明有但 UI 没有"→ 查解析链（`normalizeCatalogEntry` → `reasoningFieldsFor`）。
 4. 发现"无声明想确认"→ 跑 `verify-qoder-probe-live.mjs <model>`（花额度，单发）。
@@ -98,3 +105,9 @@ Trae 用 light/high/extra_high 映射）。`off` 在 Qoder/Trae 均不作为线�
   是上游明确 `support_thinking:false`；`kimi-k2.6`、`kimi-k2.7-code`、`minimax-m2.7`、
   `qwen3.6-plus` 是**没有 `reasoning_effort_config` 字段**（解析后 `null`）。
   用户已在 Trae 客户端确认 MiMo 确实没有档位入口 —— **不是插件漏解析，刷新链路正常**。
+- 2026-10-11 Trae（并入复算）：同一模型在 IDE 的三个分组里**窗口声明可以不同** ——
+  `deepseek-v4.1-flash` 在 `solo_agent` 下 `contextWindow 300000` /
+  `supportedContextWindows [300000, 1000000]`，`chat_v3` 下更窄。这正是插件默认取
+  **上游声明的最大档**（面板可关）的原因；关掉就回到上游给的默认档。
+  倍率覆盖复测：只查这三个分组名 = 250 ms / **24/24**；带上旧 SOLO 的四个名字 +
+  `assistant` / `builder` = 962 ms / 24/24，**边际新增 0**。

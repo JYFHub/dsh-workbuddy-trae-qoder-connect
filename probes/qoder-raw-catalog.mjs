@@ -20,9 +20,10 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createCipheriv, createHash, publicEncrypt, randomUUID } from "node:crypto";
+import { installedLibDir } from "./_installed.mjs";
 
-const LIB = join(homedir(), ".dsh", "profiles", "desktop", "node_modules", "dsh-connect", "lib");
-const qoderSrc = readFileSync(join(LIB, "providers", "qoder", "index.js"), "utf8");
+// 按 profile 依赖键定位装着的那份（包改过名，写死目录名会让探针以 ENOENT 变红）。
+const qoderSrc = readFileSync(join(installedLibDir(), "providers", "qoder", "index.js"), "utf8");
 const RSA = qoderSrc.match(/const QODER_RSA_PUBLIC_KEY = `([\s\S]*?)`;/)[1];
 const COSY_VERSION = qoderSrc.match(/const COSY_VERSION = "([^"]+)"/)[1];
 const GATEWAY = "https://gateway.qoder.com.cn";
