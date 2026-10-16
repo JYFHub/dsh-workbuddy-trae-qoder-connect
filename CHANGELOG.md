@@ -4,6 +4,11 @@
 
 ## 2026-10
 
+- **国际版每条消息都被上游拦下：`400 code 11128 conversation id missing`**（用户报，用了好几天之后突然全灭）：WorkBuddy AI 5.7 起，国际版 `/v2/chat/completions` 对出站请求做**抽样渠道校验**，要求携带官方桌面客户端那套会话头（`X-Conversation-ID` / `-Request-ID` / `-Message-ID` / `X-Root-Request-ID`），缺一个被抽到的请求就直接 400，`displayTips` 写的是「这次调用没通过渠道校验，可能不是官方客户端发出的」。插件的 `chatHeaders` 一个都没带。
+  - 不是插件自己的退化：同期所有第三方反代都在报同一条（workbuddy2api-hub 的 #380 / #383 / #388 / #392），上游侧的对策是把这四个头补齐（PR #381，已被仓库合并）。我们做同一件事。
+  - 修法：`chatHeaders` 在国际版（`regionOf(domain) === "global"`）时多带这四个头。插件没有自己的会话（DSH 每条消息都是新会话），所以每个请求**现编一套 id**、不重放旧值 —— 上游关联的正是请求 id，复用才是它要抓的谎。四个 id 都由 `randomUUID()` 生成，互不相同。
+  - **CN 不加**：该校验只在国际版网关观测到过，给国区也编一个头是用没验证过的偏差换已经验证过的偏差。
+  - 新增 `probes/verify-bugfix-conversation-headers.mjs`（8 项）：用打桩的 `fetch` 抓真实的 `chatStream` 出站头，断言国际版带齐四个 UUID、两次请求的 id 互不相同、国区一个都不带、原有身份/产品块一个不少。反向验证新增 4 处撤回（C/1–C/4）。
 - **国际版模型的 1M 上下文在 DSH 里被砍成 300K**（用户报）：上游对同一个模型同时声明多档窗口（实测 `deepseek-v4.1-flash` 是 `contextWindow 300000` + `supportedContextWindows [300000, 1000000]`），而适配器只广告一档。三个独立缺陷叠在一起，缺一个都不会表现出来：
   1. 偏好读的是 `config.useMaximumContextWindow`，而 `lib/index.js` 用 `apply(ctx, {})` 调子模块、第二个参数恒为空对象 —— 读到的**永远**是 false。偏好现在挂在面板/插件自己的 `Config`（`HUB_SECTION`，宿主唯一会投影的那份）上，由 `lib/index.js` 通过 `workbuddy.setPreferences(hubPreferences)` 把读写通道注入子模块；`catalog` 改成**惰性读源**（每次 `current()` 现读），所以面板里改完立刻生效，不用重启。
   2. 状态路由只在 `legacySettingsAvailable` 时才下发 `useMaximumContextWindow`，而那个条件要求宿主有 `settings.installSection` —— 本机 DSH 没有，于是字段从不出现、复选框根本不渲染。现在按 `region === "global"` 下发（写通道不可用时仍返回 `undefined`，界面就不显示一个存不下去的开关）。

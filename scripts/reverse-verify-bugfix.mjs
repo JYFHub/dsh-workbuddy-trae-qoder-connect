@@ -17,7 +17,8 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..");
-const PROBE = join(REPO, "probes", "verify-bugfix-intl-window-and-empty-slot.mjs");
+const PROBE_A = join(REPO, "probes", "verify-bugfix-intl-window-and-empty-slot.mjs");
+const PROBE_C = join(REPO, "probes", "verify-bugfix-conversation-headers.mjs");
 const NODE = process.execPath;
 
 /**
@@ -26,8 +27,41 @@ const NODE = process.execPath;
  *   from    —— 修复后的字面量（必须**唯一**出现）
  *   to      —— 修复前的写法
  *   expect  —— 预期变红的断言标签（子串匹配）
+ *   probe   —— 跑哪个探针（省略即 A/B 那一个；Bug C 的撤回必须显式指名）
  */
 const REVERSALS = [
+	{
+		name: "C/1 chatHeaders 不再带会话头族（国际版每条消息都被上游 11128 拦下）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: '\t\t...international ? conversationHeaders() : {}\n',
+		to: "",
+		expect: "国际版 chatStream 的出站头带齐四个会话 id",
+		probe: PROBE_C,
+	},
+	{
+		name: "C/2 四个会话 id 改成复用同一个值（上游一眼识破）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: 'function conversationHeaders() {\n\treturn {\n\t\t"X-Conversation-ID": randomUUID(),\n\t\t"X-Conversation-Request-ID": randomUUID(),\n\t\t"X-Conversation-Message-ID": randomUUID(),\n\t\t"X-Root-Request-ID": randomUUID()\n\t};\n}',
+		to: 'function conversationHeaders() {\n\tconst id = randomUUID();\n\treturn {\n\t\t"X-Conversation-ID": id,\n\t\t"X-Conversation-Request-ID": id,\n\t\t"X-Conversation-Message-ID": id,\n\t\t"X-Root-Request-ID": id\n\t};\n}',
+		expect: "四个 id 都是每次现编",
+		probe: PROBE_C,
+	},
+	{
+		name: "C/3 国区也被带上会话头族（引入一条没验证过的偏差）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: 'function chatHeaders(credential, userAgent, clientVersion) {\n\tconst international = regionOf(credential.domain) === "global";',
+		to: 'function chatHeaders(credential, userAgent, clientVersion) {\n\tconst international = true;',
+		expect: "国区 chatStream 的出站头**不**带会话头族",
+		probe: PROBE_C,
+	},
+	{
+		name: "C/4 少了 randomUUID 导入（运行时就抛 ReferenceError）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: ', randomUUID } from "node:crypto"',
+		to: ' } from "node:crypto"',
+		expect: "randomUUID 已从 node:crypto 导入",
+		probe: PROBE_C,
+	},
 	{
 		name: "A/1 catalog 惰性读源没接上活偏好",
 		file: "lib/providers/workbuddy/index.js",
@@ -150,7 +184,7 @@ for (const [index, reversal] of REVERSALS.entries()) {
 	writeFileSync(path, original.replace(reversal.from, reversal.to));
 	let result;
 	try {
-		result = spawnSync(NODE, [PROBE], { cwd: REPO, encoding: "utf8" });
+		result = spawnSync(NODE, [reversal.probe ?? PROBE_A], { cwd: REPO, encoding: "utf8" });
 	} finally {
 		copyFileSync(backup, path);
 		rmSync(backup, { force: true });
