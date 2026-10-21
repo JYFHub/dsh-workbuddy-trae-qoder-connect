@@ -103,8 +103,9 @@ WorkBuddy 登录要轮询到成功为止。完成后汇报各渠道状态与模�
 ## 开发与验证
 
 - **27 个确定性验证脚本、416 项断言**，不依赖网络、离线可跑，当前全绿；另有 3 个活体脚本做真实上游单点实测。清单与探针纪律见 [probes/README.md](probes/README.md)
-- 每处修复都做过**反向验证**：把修复撤掉，对应断言必须变红（`node scripts/reverse-verify-bugfix.mjs`，当前 14 项全部按预期变红）
+- 每处修复都做过**反向验证**：把修复撤掉，对应断言必须变红（`node scripts/reverse-verify-bugfix.mjs`，当前 21 项全部按预期变红）
 - 改完代码用 `node scripts/sync-to-profile.mjs` 同步到 profile 里跑着的那份（`--check` 只报差异）。仓库侧的 `lib/**` 与安装副本之间是硬链接，而编辑器"写新文件再改名"会把链接断开——不同步就会出现「改了但重启后没生效」
+- 这两个脚本是**维护者工具**，不随安装包分发（`package.json` 的 `files` 里显式排除）：`probes/`、`docs/`、`assets/` 同理，用户装到的只有 `lib/` + `cordis.patch.yml` + 三个面向用户的 CLI（导出 Trae 登录态 / 解 Trae 凭据 / WorkBuddy 扫码登录）
 - 历次 bug 修复记在 [CHANGELOG.md](CHANGELOG.md)，不当卖点用
 - 设计细节：[docs/CATALOG.md](docs/CATALOG.md) · [docs/TRAE-CN-PRODUCTS.md](docs/TRAE-CN-PRODUCTS.md) · [docs/TRAE-REASONING-EFFORT.md](docs/TRAE-REASONING-EFFORT.md)
 

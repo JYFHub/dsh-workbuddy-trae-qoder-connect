@@ -307,4 +307,9 @@ await ok("客户端：气泡文案接档位变化；模型按钮常显已选数"
 });
 //#endregion
 
+// 桩目录必须删：它只在断言期间供惰性 import 解析用。早先漏了这一行，
+// 每跑一次就在 probes/ 下留一份 .effort-stubs（虽然被 .gitignore 挡在
+// 仓库外，但工作区会一直堆着过期桩）。
+fs.rmSync(stubDir, { recursive: true, force: true });
+
 console.log(`\n${passed} 项断言通过${process.exitCode === 1 ? "（有失败）" : ""}`);
