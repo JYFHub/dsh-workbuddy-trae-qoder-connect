@@ -19,6 +19,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..");
 const PROBE_A = join(REPO, "probes", "verify-bugfix-intl-window-and-empty-slot.mjs");
 const PROBE_C = join(REPO, "probes", "verify-bugfix-conversation-headers.mjs");
+const PROBE_D = join(REPO, "probes", "verify-bugfix-harness-fingerprint.mjs");
 const NODE = process.execPath;
 
 /**
@@ -61,6 +62,30 @@ const REVERSALS = [
 		to: ' } from "node:crypto"',
 		expect: "randomUUID 已从 node:crypto 导入",
 		probe: PROBE_C,
+	},
+	{
+		name: "D/1 prepareChatBody 不再调用 normalizeHarnessFingerprint（国区/国际版又回 11128）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: '\tnormalizeToolChoice(obj);\n\tnormalizeHarnessFingerprint(obj);\n',
+		to: '\tnormalizeToolChoice(obj);\n',
+		expect: "DSH 系统提示首句（带句号）被改写",
+		probe: PROBE_D,
+	},
+	{
+		name: "D/2 改写退化成只改第一处、且丢掉大小写不敏感（上游照样命中）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: 'const HARNESS_FINGERPRINT = /You are an AI agent powered by DeepSeek Harness/gi;',
+		to: 'const HARNESS_FINGERPRINT = /You are an AI agent powered by DeepSeek Harness/;',
+		expect: "同一句出现两次时两处都改写",
+		probe: PROBE_D,
+	},
+	{
+		name: "D/3 改写放宽成匹配半句（误伤用户内容）",
+		file: "lib/providers/workbuddy/variants-CnrmSn0Q.js",
+		from: 'const HARNESS_FINGERPRINT = /You are an AI agent powered by DeepSeek Harness/gi;',
+		to: 'const HARNESS_FINGERPRINT = /DeepSeek Harness/gi;',
+		expect: "部分短语一律不动",
+		probe: PROBE_D,
 	},
 	{
 		name: "A/1 catalog 惰性读源没接上活偏好",

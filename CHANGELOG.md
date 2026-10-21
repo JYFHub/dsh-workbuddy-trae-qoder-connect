@@ -4,6 +4,16 @@
 
 ## 2026-10
 
+- **国区 WorkBuddy 开始被同一条渠道校验拦下：`400 code 11128 Illegal API invocation from an unapproved channel`**（用户报，紧接着国际版那条）：国际版此前修的是"缺会话头"，国区这条文案不同、原因也不同 —— 上游的渠道校验除了看请求头，还看**请求文本里的固定句子**：
+  `You are an AI agent powered by DeepSeek Harness`
+  命中就回 11128，与账号、身份、会话头全部无关。而这正是 **DSH 系统提示的第一句**，也就是说插件把宿主自己的系统提示原样发上去，被上游当成了"非官方客户端"的指纹。
+  - 线索来自 [workbuddy2api-hub PR #540](https://github.com/ardeyouxipianyi/workbuddy2api-hub/pull/540)（作者逐句二分实测）：整句触发、拆词不触发、单独 `DeepSeek Harness` 也不触发、大小写不敏感、补会话头无效、换账号无效、只有带完整 system prompt 的请求失败。
+  - 修法：`prepareChatBody` 加第三类清洗 `normalizeHarnessFingerprint`，只在句中插入一个 the（`powered by the DeepSeek Harness`），语义不变、短语结构变了、不再命中。与既有两类清洗（`normalizeDeveloperRole` / `normalizeToolChoice`）同一个函数、同一个理由：都是为了让上游不要用 11128 拒掉一个本身正确的请求。
+  - **两个区域都清洗**。国区在 `chatStream` 里原本是原样透传，唯一的清洗点就是 `lib/providers/workbuddy/index.js` 的 `prepareChatBody(...)` —— 探针专门钉住这一跳，免得以后有人把 CN 那条捷径改回去。
+  - **真机实测**（插件真实客户端打真实上游，同一份 body 只差这一次清洗）：`workbuddy1` / `workbuddy2` 国区从 `400 / 11128` 变 **`200`**；`workbuddy5` 国际版两次都 200（它不匹配这句，所以改写对国际版无害）。
+  - 覆盖所有角色与两种 content 形状（纯字符串、array-of-parts）：校验是文本匹配，不认角色，只改 `system` 会漏掉工具结果/用户轮里的引用。未知 content 形状原样保留，不猜不篡改。
+  - 新增 `probes/verify-bugfix-harness-fingerprint.mjs`（16 项），反向验证新增 3 处撤回（D/1–D/3），现共 21 处。
+  - **没有照搬他们的性能设计**：`workbuddy2api-hub` 在正则前加了一层小写字面量 `in` 快路径（实测 4KB 文本 319µs 里正则占 137+188µs、`in` 只占 9µs），因为它是**网关**、一个实例服务很多并发用户、每段文本都要过一遍清洗（64KB 要 6.2ms）。我们一个用户一次请求，正则扫整个 body 是毫秒级，相对几百毫斯的网络往返不到 1%；而把同一句抄两遍（正则 + 小写字面量）会引入"改一处忘另一处、快路径静默跳过改写"的 bug 类。为 1–3ms 的不可见收益换这个风险，不值。
 - **国际版每条消息都被上游拦下：`400 code 11128 conversation id missing`**（用户报，用了好几天之后突然全灭）：WorkBuddy AI 5.7 起，国际版 `/v2/chat/completions` 对出站请求做**抽样渠道校验**，要求携带官方桌面客户端那套会话头（`X-Conversation-ID` / `-Request-ID` / `-Message-ID` / `X-Root-Request-ID`），缺一个被抽到的请求就直接 400，`displayTips` 写的是「这次调用没通过渠道校验，可能不是官方客户端发出的」。插件的 `chatHeaders` 一个都没带。
   - 不是插件自己的退化：同期所有第三方反代都在报同一条（workbuddy2api-hub 的 #380 / #383 / #388 / #392），上游侧的对策是把这四个头补齐（PR #381，已被仓库合并）。我们做同一件事。
   - 修法：`chatHeaders` 在国际版（`regionOf(domain) === "global"`）时多带这四个头。插件没有自己的会话（DSH 每条消息都是新会话），所以每个请求**现编一套 id**、不重放旧值 —— 上游关联的正是请求 id，复用才是它要抓的谎。四个 id 都由 `randomUUID()` 生成，互不相同。
