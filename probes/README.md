@@ -7,7 +7,7 @@
 ```bash
 node probes/verify-trae-products.mjs                 # Trae 产品变体（56）
 node probes/verify-bugfix-conversation-headers.mjs     # 国际版会话头族：上游 11128 渠道校验（8）
-node probes/verify-bugfix-harness-fingerprint.mjs      # DSH 系统提示首句被上游当渠道指纹（16）
+node probes/verify-bugfix-harness-fingerprint.mjs      # DSH 系统提示指纹：抹掉 DeepSeek Harness（18）
 node probes/verify-bugfix-intl-window-and-empty-slot.mjs  # 国际版最大窗口（含面板开关）+ 空槽位不显示模型（40）
 node probes/verify-workbuddy-intl.mjs               # WorkBuddy 国际版接入（含真实凭据解密）
 node probes/verify-probe-service.mjs               # 哨兵探查服务（25）

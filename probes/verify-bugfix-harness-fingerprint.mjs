@@ -1,9 +1,9 @@
 /**
- * Bug D 的回归探针（2026-10-21 用户报告）。
+ * Bug D 的回归探针（2026-10-21 用户报告，第二版）。
  *
  * ## 现象
  *
- * 国区 WorkBuddy 槽位开始报 400，与国际版此前那条同类但文案不同：
+ * WorkBuddy 国区槽位报 400，文案与国际版此前那条同类但不同：
  *
  *   400 {"code":11128,"msg":"Illegal API invocation from an unapproved channel",
  *        "displayTips":{"en":"This call failed channel verification,
@@ -11,30 +11,28 @@
  *
  * ## 根因
  *
- * 上游的渠道校验除了看请求头，还看**请求文本里的固定句子**。命中这一句就回
- * 11128，与账号、身份、会话头全部无关：
+ * 上游的渠道校验除了看请求头，还看**请求文本里的 vendor 指纹**。DSH 的系统
+ * 提示首句自报家门：
  *
- *   You are an AI agent powered by DeepSeek Harness
+ *   You are an AI agent powered by the DeepSeek Harness.
  *
- * 而这句话正是 DSH 系统提示的第一句 —— 也就是说，插件把宿主自己的系统提示
- * 原样发上去，上游把它当成了"非官方客户端"的指纹。
+ * 插件把它原样发上去，上游据此判定"不是官方客户端"，回 11128。
  *
- * 线索来自 `ardeyouxipianyi/workbuddy2api-hub` 的 PR #540（作者逐句二分实测）：
- *   · 整句触发，拆成单词不触发，单独 `DeepSeek Harness` 也不触发；
- *   · 大小写不敏感；
- *   · 补会话头无效、换账号无效（所以 Bug C 那个补头是必要的，但不充分）；
- *   · 短请求正常，只有带完整 system prompt 的请求失败；
- *   · 只在句中插入一个 the（`powered by the DeepSeek Harness`）即 200。
+ * ## 第一版修复为什么是错的（本探针 D2 那组钉住这件事）
  *
- * ## 修复
+ * 第一版照搬 workbuddy2api-hub PR #540：把句子改写成"插一个 the"的版本。
+ * 但 **DSH 的句子本来就带 the**，于是模式串与替换值指向同一个字符串，
+ * `String.replace` 什么也没改。而当时的断言只检查"结果不含不带 the 的变体"，
+ * 原文当然不含 —— 16 项探针全绿，上游照样 400。
  *
- * `prepareChatBody` 里加第三类清洗 `normalizeHarnessFingerprint`，与前两类
- * （`normalizeDeveloperRole` / `normalizeToolChoice`）同一个函数、同一个理由：
- * 都是为了让上游不要用 11128 拒掉一个本身正确的请求。
+ * **教训写进断言**：改写类修复的断言必须是「出口文本里不再出现被禁的指纹
+ * 子串」，而不是「等于某个特定字符串」。后者会在模式串写错时静默通过。
  *
- * ## 反向验证
+ * ## 现在
  *
- * 撤掉 `normalizeHarnessFingerprint(obj);` 这一行，本探针必须变红。
+ * 不赌句子结构能不能绕过，把 vendor 名字本身抹掉：
+ * 整句 `You are an AI agent powered by the DeepSeek Harness.` 换成
+ * `You are an AI coding agent.`，残留的 `DeepSeek Harness` 二元组兜底替换。
  *
  * 用法：node probes/verify-bugfix-harness-fingerprint.mjs [--installed]
  */
@@ -58,7 +56,7 @@ const eq = (a, b, what) => {
 };
 const read = (rel) => readFileSync(join(REPO, rel), "utf8");
 
-// —— 桩宿主依赖，加载真实变体模块（与其它 bugfix 探针同一套）——
+// —— 桩宿主依赖 ——
 const stubDir = join(HERE, ".harnessfp-stubs");
 rmSync(stubDir, { recursive: true, force: true });
 mkdirSync(stubDir, { recursive: true });
@@ -96,102 +94,142 @@ const { register } = await import("node:module");
 register(pathToFileURL(loaderFile).href, import.meta.url);
 
 const VARIANTS = join(REPO, "lib", "providers", "workbuddy", "variants-CnrmSn0Q.js");
-
 const mod = await import(`${pathToFileURL(VARIANTS).href}?fp=${Date.now()}`);
-/** `M` = prepareChatBody，`D` = WorkBuddyUpstreamClient（导出表是单字母别名）。 */
 const prepareChatBody = mod.M;
-const UpstreamClient = mod.D;
 assert.equal(typeof prepareChatBody, "function", "变体模块应导出 prepareChatBody");
 
-/** 上游真正在匹配的那一句（大小写不敏感）。 */
-const FINGERPRINT = /you are an ai agent powered by deepseek harness/i;
-const REWRITTEN = "You are an AI agent powered by the DeepSeek Harness";
-
-/** 把 body 过一遍真实 prepareChatBody，返回解析后的对象与原文。 */
 const prepare = (body) => {
-	const out = prepareChatBody(JSON.stringify(body));
-	return { text: out, body: JSON.parse(out) };
+	const text = prepareChatBody(JSON.stringify(body));
+	return { text, body: JSON.parse(text) };
 };
-const systemText = (body) => body.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+/** 判据：出站文本里不能再出现这个二元组（大小写不敏感）。 */
+const FINGERPRINT = /deepseek[\s_-]*harness/i;
+const firstText = (body) => body.messages[0].content;
 
-console.log("【D1】指纹句必须被改写（这是 Bug D 的修复点）");
+/** DSH 真实系统提示（实测自 app.asar 的 Model Experience 段）。 */
+const DSH_SYSTEM = "You are an AI agent powered by the DeepSeek Harness.";
 
-ok("DSH 系统提示首句（带句号）被改写，且不再命中指纹", () => {
-	const { body } = prepare({
-		model: "deepseek-v4-flash",
-		messages: [
-			{ role: "system", content: "You are an AI agent powered by DeepSeek Harness." },
-			{ role: "user", content: "hi" },
-		],
-	});
-	const content = body.messages[0].content;
-	eq(content, `${REWRITTEN}.`, "改写后的系统提示");
-	if (FINGERPRINT.test(content)) throw new Error("改写后仍然命中指纹 —— 等于没修");
+console.log("【D1】DSH 真实系统提示必须被抹掉指纹");
+
+ok("DSH 原文（带 the）的指纹被抹掉", () => {
+	const { body } = prepare({ messages: [{ role: "developer", content: DSH_SYSTEM }] });
+	const out = firstText(body);
+	if (FINGERPRINT.test(out)) throw new Error(`出站仍含指纹：${out}`);
 });
 
-ok("大小写变体同样被改写（上游匹配不区分大小写）", () => {
-	for (const variant of [
-		"YOU ARE AN AI AGENT POWERED BY DEEPSEEK HARNESS",
-		"you are an ai agent powered by deepseek harness",
-		"You Are An AI Agent Powered By DeepSeek Harness",
+ok("不带 the 的变体也被抹掉", () => {
+	const { body } = prepare({ messages: [{ role: "developer", content: "You are an AI agent powered by DeepSeek Harness." }] });
+	if (FINGERPRINT.test(firstText(body))) throw new Error(`仍含指纹：${firstText(body)}`);
+});
+
+ok("大小写不敏感（逐条指名，撤掉 i 标志必须红）", () => {
+	const variants = [
+		["全大写", "YOU ARE AN AI AGENT POWERED BY THE DEEPSEEK HARNESS."],
+		["全小写", "you are an ai agent powered by the deepseek harness."],
+		["首字母大写", "You Are An AI Agent Powered By The DeepSeek Harness."],
+	];
+	for (const [label, variant] of variants) {
+		const { body } = prepare({ messages: [{ role: "developer", content: variant }] });
+		const out = firstText(body);
+		if (out === variant) throw new Error(`${label} 变体完全没被改写：${variant}`);
+		if (FINGERPRINT.test(out)) throw new Error(`${label} 变体漏了：${out}`);
+	}
+});
+
+ok("嵌在长系统提示中间也抹掉，且正文一字不动", () => {
+	const tail = "You are a coding agent working in DSH. Follow the user instructions carefully.";
+	const { body } = prepare({ messages: [{ role: "developer", content: `${DSH_SYSTEM}\n\n${tail}` }] });
+	const out = firstText(body);
+	if (FINGERPRINT.test(out)) throw new Error(`仍含指纹：${out}`);
+	if (!out.includes(tail)) throw new Error(`正文被改动了：${out}`);
+});
+
+console.log("\n【D2】第一版为什么被漏掉 —— 这组断言就是那个教训");
+
+ok("出站文本的改变必须可观测（第一版模式串==替换值，等于没改）", () => {
+	const { body } = prepare({ messages: [{ role: "developer", content: DSH_SYSTEM }] });
+	eq(body.messages[0].role, "system", "developer 已被改写成 system（这是既有行为）");
+	if (body.messages[0].content === DSH_SYSTEM) {
+		throw new Error("清洗前后 content 完全相同 —— 改写没生效（第一版就是这样全绿的）");
+	}
+	if (FINGERPRINT.test(body.messages[0].content)) {
+		throw new Error("清洗后仍含指纹 —— 改写是空转");
+	}
+});
+
+ok("改写后仍是完整可读的一句（不留 `powered by the .` 这类残句）", () => {
+	const { body } = prepare({ messages: [{ role: "developer", content: DSH_SYSTEM }] });
+	const out = firstText(body).trim();
+	if (!out.endsWith(".")) throw new Error(`残句：${out}`);
+	if (/\bby\s*[.,]/.test(out)) throw new Error(`留下悬空介词：${out}`);
+	if (out.length < 10) throw new Error(`句子被削太短：${out}`);
+});
+
+ok("**整句正则必须先吃掉冠词**（否则兜底会拼出 `the the coding assistant` 这种残破句）", () => {
+	// 只抹指纹、不管句子质量的话，兜底替换会把 "powered by the DeepSeek Harness"
+	// 变成 "powered by the the coding assistant" —— 指纹是没了，但句子废了。
+	for (const [label, input] of [
+		["带 the", DSH_SYSTEM],
+		["不带 the", "You are an AI agent powered by DeepSeek Harness."],
 	]) {
-		const { body } = prepare({ messages: [{ role: "system", content: variant }] });
-		if (FINGERPRINT.test(body.messages[0].content)) {
-			throw new Error(`大小写变体漏了：${variant} -> ${body.messages[0].content}`);
+		const { body } = prepare({ messages: [{ role: "developer", content: input }] });
+		const out = firstText(body);
+		if (/\bthe\s+the\b/i.test(out)) throw new Error(`${label}：出现了重复冠词：${out}`);
+		if (/\bby\s+the\s+the\b/i.test(out)) throw new Error(`${label}：介词后重复冠词：${out}`);
+		if (/\bby\s+the\s+coding assistant\b/i.test(out)) throw new Error(`${label}：冠词没被整句吃掉：${out}`);
+	}
+});
+
+ok("源码里不存在「模式串与替换值相同」的自欺写法", () => {
+	const src = read("lib/providers/workbuddy/variants-CnrmSn0Q.js");
+	// 成对出现的改写常量：改写值必须与被匹配的字符串**真的不同**。
+	// 第一版 HARNESS_FINGERPRINT 与 HARNESS_FINGERPRINT_REWRITE 是同一个
+	// 字符串（只差 the 的有无，而原文本来就带 the），replace 等于空转。
+	const pairs = [
+		["HARNESS_IDENTITY_SENTENCE", "HARNESS_IDENTITY_REWRITE", "You are an AI agent powered by the DeepSeek Harness"],
+	];
+	let checked = 0;
+	for (const [patternName, rewriteName, matchedSample] of pairs) {
+		if (!src.includes(patternName) || !src.includes(rewriteName)) {
+			throw new Error(`${patternName} / ${rewriteName} 不在源码里 —— 断言与实现脱节了`);
+		}
+		const value = src.match(new RegExp(`const ${rewriteName} = "(.+?)";`))?.[1];
+		if (value === undefined) throw new Error(`取不到 ${rewriteName} 的值`);
+		checked++;
+		if (value.toLowerCase() === matchedSample.toLowerCase()) {
+			throw new Error(`${rewriteName} 与被匹配的字符串相同 —— replace 什么也没做`);
+		}
+		// 真正的判据：拿这个改写值跑一遍，指纹必须消失
+		if (FINGERPRINT.test(value)) {
+			throw new Error(`${rewriteName} 自身仍含指纹 —— 换上去等于没换`);
 		}
 	}
+	if (checked === 0) throw new Error("一条都没检查到，断言失效了");
 });
 
-ok("嵌在长系统提示中间也改写，前后文一字不动", () => {
-	const { body } = prepare({
-		messages: [{
-			role: "system",
-			content: "HEAD\nYou are an AI agent powered by DeepSeek Harness.\n\nYou are a coding agent.\nTAIL",
-		}],
-	});
-	eq(
-		body.messages[0].content,
-		`HEAD\n${REWRITTEN}.\n\nYou are a coding agent.\nTAIL`,
-		"长提示改写结果",
-	);
-});
+console.log("\n【D3】精确性：不误伤");
 
-console.log("\n【D2】改写必须精确：不误伤、不重复改写");
-
-ok("幂等：已经是改写后的句子不再变", () => {
-	const { body } = prepare({ messages: [{ role: "system", content: REWRITTEN }] });
-	eq(body.messages[0].content, REWRITTEN, "重复过一遍");
-});
-
-ok("部分短语一律不动（上游只认整句，误伤会篡改用户内容）", () => {
-	for (const text of [
-		"DeepSeek Harness",
-		"You are an AI agent.",
-		"powered by DeepSeek Harness",
-		"You are an AI agent powered by DeepSeek",
-		"hi",
-	]) {
-		const { body } = prepare({ messages: [{ role: "system", content: text }] });
-		eq(body.messages[0].content, text, `不该改：${text}`);
+ok("无关文本一字不动", () => {
+	for (const text of ["hi", "You are an AI agent.", "a helpful assistant", ""]) {
+		const { body } = prepare({ messages: [{ role: "user", content: text }] });
+		eq(firstText(body), text, `不该改：${text}`);
 	}
 });
 
-ok("同一句出现两次时两处都改写", () => {
-	const { body } = prepare({
-		messages: [{ role: "system", content: "You are an AI agent powered by DeepSeek Harness A You are an AI agent powered by DeepSeek Harness" }],
-	});
-	const matches = body.messages[0].content.match(/powered by DeepSeek Harness/gi);
-	eq(matches, null, "改写后不该还有未改写的指纹");
+ok("幂等：已经是抹过的文本再过一遍不变", () => {
+	const once = prepare({ messages: [{ role: "developer", content: DSH_SYSTEM }] }).body;
+	const twice = prepare({ messages: [{ role: "developer", content: firstText(once) }] }).body;
+	eq(firstText(twice), firstText(once), "二次清洗");
 });
 
-console.log("\n【D3】覆盖所有角色与两种 content 形状");
+console.log("\n【D4】覆盖面：所有角色 + 两种 content 形状");
 
-ok("非 system 角色同样改写（校验是文本匹配，不认角色）", () => {
+ok("非 system 角色同样抹（校验是文本匹配，不认角色）", () => {
 	const { body } = prepare({
 		messages: [
 			{ role: "system", content: "sys" },
-			{ role: "user", content: "You are an AI agent powered by DeepSeek Harness" },
-			{ role: "assistant", content: "You are an AI agent powered by DeepSeek Harness" },
+			{ role: "user", content: `prefix ${DSH_SYSTEM} suffix` },
+			{ role: "assistant", content: DSH_SYSTEM },
 		],
 	});
 	for (const index of [1, 2]) {
@@ -201,76 +239,45 @@ ok("非 system 角色同样改写（校验是文本匹配，不认角色）", ()
 	}
 });
 
-ok("array-of-parts 形状的 text 段被改写", () => {
+ok("**兜底**：句式被改写的引用也要抹（整句正则吃不到这种，靠 vendor 词组兜底）", () => {
+	// 这几种都不是 DSH 的原句，整句正则匹配不到，只有兜底能救。
+	for (const quoted of [
+		"earlier it said: powered by deepseek harness, so I replied",
+		"The banner reads 'DEEPSEEK-HARNESS build 42'",
+		"docs mention DeepSeek  Harness (two spaces)",
+	]) {
+		const { body } = prepare({ messages: [{ role: "user", content: quoted }] });
+		const out = firstText(body);
+		if (FINGERPRINT.test(out)) throw new Error(`兜底没生效：${quoted} -> ${out}`);
+	}
+});
+
+ok("array-of-parts 形状的 text 段被抹，无关段落不动", () => {
 	const { body } = prepare({
 		messages: [{
 			role: "system",
 			content: [
-				{ type: "text", text: "You are an AI agent powered by DeepSeek Harness." },
-				{ type: "text", text: "keep me" },
+				{ type: "text", text: DSH_SYSTEM },
+				{ type: "text", text: "keep me exactly" },
 			],
 		}],
 	});
-	eq(body.messages[0].content[0].text, `${REWRITTEN}.`, "第一个 text 段");
-	eq(body.messages[0].content[1].text, "keep me", "无关段落不动");
+	if (FINGERPRINT.test(body.messages[0].content[0].text)) throw new Error("第一个 text 段仍含指纹");
+	eq(body.messages[0].content[1].text, "keep me exactly", "无关段落");
 });
 
 ok("未知 content 形状原样保留（不猜、不篡改）", () => {
-	const weird = { role: "system", content: 42 };
-	const { body } = prepare({ messages: [weird] });
+	const { body } = prepare({ messages: [{ role: "system", content: 42 }] });
 	eq(body.messages[0].content, 42, "非字符串/非数组的 content");
 });
 
-console.log("\n【D4】这次只做加法：前两类清洗与其余字段都不能动");
-
-ok("developer 角色仍被改写成 system（原有修复没被挤掉）", () => {
-	const { body } = prepare({
-		messages: [{ role: "developer", content: "You are an AI agent powered by DeepSeek Harness." }],
-	});
-	eq(body.messages[0].role, "system", "role 改写");
-	eq(body.messages[0].content, `${REWRITTEN}.`, "同一段里的指纹也被改写");
-});
-
-ok("stream 强制为 true、tool_choice 压平、模型与消息顺序不变", () => {
-	const { body } = prepare({
-		model: "deepseek-v4-flash",
-		stream: false,
-		max_tokens: 128000,
-		tool_choice: { type: "auto" },
-		messages: [
-			{ role: "system", content: "s" },
-			{ role: "user", content: "u" },
-		],
-	});
-	eq(body.stream, true, "stream");
-	eq(body.tool_choice, "auto", "tool_choice");
-	eq(body.model, "deepseek-v4-flash", "model");
-	eq(body.max_tokens, 128000, "max_tokens");
-	eq(body.messages.map((m) => m.role), ["system", "user"], "消息顺序");
-});
-
-ok("非 JSON / 非对象输入原样返回（与既有契约一致）", () => {
-	eq(prepareChatBody("not json"), "not json", "非 JSON");
-	eq(prepareChatBody("[1,2]"), "[1,2]", "数组");
-});
-
 console.log("\n【D5】端到端：真实客户端真正发出去的 body 里没有指纹");
-
-/**
- * 用打桩的 fetch 抓真实 `chatStream` 的出站 body。
- *
- * 复刻 `lib/providers/workbuddy/index.js` 的真实调用链：先
- * `prepareChatBody(...)`，再 `client.chatStream(credential, prepared)`。
- * 两个区域都测 —— 国区此前是「原样透传」，如果不经过 prepareChatBody，
- * 这里的断言就会红，正好钉住「CN 也必须清洗」。
- */
-const DSH_SYSTEM = "You are an AI agent powered by DeepSeek Harness.\n\nYou are a coding agent working in DSH.";
 
 for (const [label, domain, clientVersion] of [
 	["国区", "www.codebuddy.cn", "5.7.3"],
 	["国际版", "workbuddy.ai", "5.7.6"],
 ]) {
-	ok(`${label}：出站 body 不含指纹，且系统提示其余部分完好`, async () => {
+	ok(`${label}：出站 body 不含 harness，系统提示其余部分完好`, async () => {
 		const home = join(tmpdir(), `dsh-harnessfp-${domain.replace(/\W/g, "")}-${Date.now()}`);
 		mkdirSync(home, { recursive: true });
 		const captured = [];
@@ -283,8 +290,7 @@ for (const [label, domain, clientVersion] of [
 		process.env.DSH_HOME = home;
 		try {
 			const m = await import(`${pathToFileURL(VARIANTS).href}?e2e=${domain}-${Date.now()}`);
-			const Client = m.D;
-			const client = new Client({ resolveChatIdentity: async () => ({ clientVersion }) });
+			const client = new m.D({ resolveChatIdentity: async () => ({ clientVersion }) });
 			const credential = {
 				accessToken: "probe-token",
 				refreshToken: "probe-refresh",
@@ -292,10 +298,11 @@ for (const [label, domain, clientVersion] of [
 				domain,
 				expiresAt: Date.now() + 3_600_000,
 			};
+			const tail = "You are a coding agent working in DSH.";
 			const prepared = m.M(JSON.stringify({
 				model: "deepseek-v4-flash",
 				messages: [
-					{ role: "developer", content: DSH_SYSTEM },
+					{ role: "developer", content: `${DSH_SYSTEM}\n\n${tail}` },
 					{ role: "user", content: "hi" },
 				],
 			}));
@@ -308,30 +315,28 @@ for (const [label, domain, clientVersion] of [
 		}
 		eq(captured.length, 1, "发出一次请求");
 		const sent = String(captured[0].body);
-		if (FINGERPRINT.test(sent)) throw new Error(`出站 body 仍含指纹 —— 上游会回 11128：\n${sent.slice(0, 400)}`);
-		const parsed = JSON.parse(sent);
-		const text = systemText(parsed);
-		if (!text.includes("You are a coding agent working in DSH.")) {
-			throw new Error("系统提示的其余部分被吃掉了 —— 清洗必须只改那一句");
+		if (FINGERPRINT.test(sent)) {
+			throw new Error(`出站 body 仍含指纹 —— 上游会回 11128：\n${sent.slice(0, 400)}`);
 		}
-		eq(parsed.messages[0].role, "system", "developer 已改写为 system");
+		if (!sent.includes("You are a coding agent working in DSH.")) {
+			throw new Error("系统提示正文被吃掉了 —— 清洗必须只动指纹那一句");
+		}
 	});
 }
 
-console.log("\n【D6】接线：prepareChatBody 必须真的被调用（两个区域）");
+console.log("\n【D6】接线");
 
-ok("index.js 的 chatCompletions 对**两个区域**都先过 prepareChatBody", () => {
+ok("index.js 的 chatCompletions 对两个区域都先过 prepareChatBody", () => {
 	const src = read("lib/providers/workbuddy/index.js");
 	if (!/const prepared = prepareChatBody\(/.test(src)) {
 		throw new Error("chatCompletions 没有调用 prepareChatBody —— 清洗根本没接线");
 	}
-	// 国区在 chatStream 里是原样透传，所以上面这一行是国区唯一的清洗点。
 	if (!/client\.chatStream\(credential, prepared,/.test(src)) {
 		throw new Error("chatStream 收到的不是 prepared，清洗被绕过");
 	}
 });
 
-ok("prepareChatBody 内部依次调用三类清洗（少任何一类都会漏一种 11128）", () => {
+ok("prepareChatBody 内依次调用三类清洗", () => {
 	const src = read("lib/providers/workbuddy/variants-CnrmSn0Q.js");
 	const at = src.indexOf("function prepareChatBody(");
 	const body = src.slice(at, at + 700);

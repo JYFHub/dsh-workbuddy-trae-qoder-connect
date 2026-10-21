@@ -4,6 +4,13 @@
 
 ## 2026-10
 
+- **重写上一版对「11128 渠道校验」的修复 —— 上一版是错的，且探针把我骗过去了**（2026-10-21 当天两次用户报告）：
+  - 第一版照搬 workbuddy2api-hub PR #540 的「插一个 the」：把 You are an AI agent powered by DeepSeek Harness 改写成带 the 的版本。但**DSH 的句子本来就带 the**（实测自 pp.asar 的 Model Experience 段：You are an AI agent powered by the DeepSeek Harness.），于是模式串与替换值是同一个字符串，String.replace 什么也没改。
+  - 而当时的探针只断言「结果不含不带 the 的那个变体」—— 原文当然不含，于是 16 项全绿。**这是我写断言的方式错了**：改写类修复必须断言「出口文本里不再出现被禁的指纹子串」，不能断言「等于某个特定字符串」。
+  - 更糟的是我当时拿一次「国区 400 -> 200」当成了修复生效的证据。该上游是**抽样**拦截（社区实测约 0.05%），单次成功根本不能作为证据。
+  - 现在的做法：不赌句子结构能否绕过，直接把 vendor 名字抹掉。整句 You are an AI agent powered by the DeepSeek Harness. 换成 You are an AI coding agent.，再用 DeepSeek[\s_-]*Harness 兜底抹掉任何残留（引用、翻译、换句式都覆盖）。用户一句「把 deepseek harness 这个词删了就行」直接点破了这一点。
+  - 探针重写为 18 项，其中三项专钉这次的教训：①出站文本的改变必须可观测；②源码里不许出现「模式串 == 替换值」的自欺写法；③整句正则必须先吃掉冠词，否则兜底会拼出 powered by the the coding assistant。
+  - 反向验证 23 处全红。其中 D/2、D/3、D/4、D/5 四条是**边跑边改**的：第一轮的归因全部不对（有的变红在别的断言上，有的撤回后仍然全绿），逐条查实后才发现「撤掉整句正则的 i 标志仍然全绿」是**正确行为**（兜底正则也带 i，会救回来），于是把这条撤回改成测兜底正则的 i，另补一条测冠词。
 - **国区 WorkBuddy 开始被同一条渠道校验拦下：`400 code 11128 Illegal API invocation from an unapproved channel`**（用户报，紧接着国际版那条）：国际版此前修的是"缺会话头"，国区这条文案不同、原因也不同 —— 上游的渠道校验除了看请求头，还看**请求文本里的固定句子**：
   `You are an AI agent powered by DeepSeek Harness`
   命中就回 11128，与账号、身份、会话头全部无关。而这正是 **DSH 系统提示的第一句**，也就是说插件把宿主自己的系统提示原样发上去，被上游当成了"非官方客户端"的指纹。
