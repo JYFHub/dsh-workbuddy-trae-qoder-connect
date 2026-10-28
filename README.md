@@ -100,12 +100,25 @@ WorkBuddy 登录要轮询到成功为止。完成后汇报各渠道状态与模�
 - **WorkBuddy AI 国际版没有签到活动**，面板会显示「不适用」（它的免费额度体现在限时免费模型上，如 `deepseek-v4.1-flash` 当前 `x0.00`）
 - 少数模型上游只声明一档窗口（如 `kimi-k2.6`），以模型列表里显示的为准
 
+## 适配 WorkBuddy / DSH 最新插件协议
+
+插件按 DSH NEXT（DeepSeek Harness ≥ 0.2.0）的插件协议实现。若你从旧宿主升级后插件"装上了但面板/侧栏入口出不来"，基本是下面这几条没跟上：
+
+- **客户端立即加载**：`package.json` 的 `dsh.client` 为 `platform: "web"` + `immediately: true`。`immediately` 缺失时浏览器端模块不会在宿主启动时就注册，面板与侧栏「渠道中心」入口都不会挂载——这是升级到 NEXT 后最常见的"无法使用"根因。
+- **显示元数据**：Plugin Manager 与设置页从 `locale/en.json`、`locale/zh.json` 的 `meta.title` / `meta.description` 读标题与说明，从 `icon.svg` 读图标（均通过 `exports` 的 `./locale/*.json` 与 `./icon` 暴露，并在 `files` 里随包发布）。缺这些会在插件清单里出现诊断回退，甚至被标记异常。
+- **`dsh.client.inject` 只排激活顺序**：现在只列仍存在于宿主的 UI 包——`dsh-client-ui-conversation` / `dsh-client-ui-settings-plugins` / `dsh-client-locale`。旧协议里列过的 `dsh-api-remotes` / `dsh-api-session-controller` / `dsh-client-ui-renderer` / `dsh-client-ui-model-selection` 在新宿主已不存在，留在列表会让客户端加载失败。插件自身**不 `require` 任何宿主 Client 包**——UI 控件自建、主题用宿主 `--dsw-alias-*` 令牌，符合最新协议"不得把宿主 Client 包当模块引入"的硬性要求（引入即无类型检查，抛错会整块白屏）。
+- **peer 范围放宽**：`@deepseek-ai/*` 与 `pi-ai` 的 peer 用 `>=` 下限写法（如 `>=0.1.5-rc.1`），显式覆盖预发布分支并兼容 0.2.0+ 宿主；它们全部标 `optional`，由宿主进程提供、不进 profile 的 node_modules。
+- **客户端模块契约**：`lib/client.js` 用 `window.__ModuleLoader__.load({ id: 包名, factory })` 注册，工厂返回 `{ inject, apply }`，通过 `ctx.slots.inject` / `ctx.slots.register` 挂到 `conversation.composer.dock`、`settings.plugin.item`、`plugins.bundle.config` 等槽位——这是现行客户端模块系统的标准写法。
+- **Host 半侧**：provider / 路由靠 `cordis.patch.yml` 的 `- insert` 注册，row `id`（`dsh-connect`）与 `lib/index.js` 导出的 `name` 逐字一致；该半侧在 NEXT 宿主下日志证实仍正常加载。
+
+部署到 DSH NEXT：提交改动后，在插件页重装（或用 `plugin_manager` 以本地目录 `install_bundle`），**重启 DSH** 让新的 JavaScript 模块重新生成。只是改凭据/产品切换是热生效，改插件代码必须重启。
+
 ## 开发与验证
 
 - **27 个确定性验证脚本、418 项断言**，不依赖网络、离线可跑，当前全绿；另有 3 个活体脚本做真实上游单点实测。清单与探针纪律见 [probes/README.md](probes/README.md)
 - 每处修复都做过**反向验证**：把修复撤掉，对应断言必须变红（`node scripts/reverse-verify-bugfix.mjs`，当前 23 项全部按预期变红）
 - 改完代码用 `node scripts/sync-to-profile.mjs` 同步到 profile 里跑着的那份（`--check` 只报差异）。仓库侧的 `lib/**` 与安装副本之间是硬链接，而编辑器"写新文件再改名"会把链接断开——不同步就会出现「改了但重启后没生效」
-- 这两个脚本是**维护者工具**，不随安装包分发（`package.json` 的 `files` 里显式排除）：`probes/`、`docs/`、`assets/` 同理，用户装到的只有 `lib/` + `cordis.patch.yml` + 三个面向用户的 CLI（导出 Trae 登录态 / 解 Trae 凭据 / WorkBuddy 扫码登录）
+- 这两个脚本是**维护者工具**，不随安装包分发（`package.json` 的 `files` 里显式排除）：`probes/`、`docs/`、`assets/` 同理，用户装到的有 `lib/` + `cordis.patch.yml` + `locale/`（en/zh 显示元数据）+ `icon.svg` + 三个面向用户的 CLI（导出 Trae 登录态 / 解 Trae 凭据 / WorkBuddy 扫码登录）
 - 历次 bug 修复记在 [CHANGELOG.md](CHANGELOG.md)，不当卖点用
 - 设计细节：[docs/CATALOG.md](docs/CATALOG.md) · [docs/TRAE-CN-PRODUCTS.md](docs/TRAE-CN-PRODUCTS.md) · [docs/TRAE-REASONING-EFFORT.md](docs/TRAE-REASONING-EFFORT.md)
 

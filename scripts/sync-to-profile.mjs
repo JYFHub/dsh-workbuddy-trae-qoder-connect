@@ -10,7 +10,7 @@
  *   node scripts/sync-to-profile.mjs            # 同步
  *   node scripts/sync-to-profile.mjs --check    # 只报差异，不写
  */
-import { copyFileSync, readFileSync, statSync, existsSync } from "node:fs";
+import { copyFileSync, readFileSync, statSync, existsSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -25,7 +25,12 @@ const FILES = [
 	"package.json",
 	"cordis.patch.yml",
 	"README.md",
+	"CHANGELOG.md",
+	"NOTICE",
 	"LICENSE",
+	"icon.svg",
+	"locale/en.json",
+	"locale/zh.json",
 	"lib/index.js",
 	"lib/panel.js",
 	"lib/client.js",
@@ -83,7 +88,10 @@ for (const rel of FILES) {
 		continue;
 	}
 	const before = existsSync(to) ? hashOf(to) : "(不存在)";
-	if (!check) copyFileSync(from, to);
+	if (!check) {
+		mkdirSync(dirname(to), { recursive: true });
+		copyFileSync(from, to);
+	}
 	copied++;
 	console.log(`${check ? "DIFF" : "COPY"}  ${rel}  ${before} -> ${hashOf(from)}  (${statSync(from).size} B)`);
 }
