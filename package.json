@@ -1,7 +1,7 @@
 {
   "name": "dsh-workbuddy-trae-qoder-connect",
-  "displayName": "WorkBuddy + Trae + Qoder Connect",
-  "description": "一个插件接入全部渠道模型：WorkBuddy（含企业版，多账号注册表）/ Trae / Qoder CN。支持渠道添加、改名、删除、凭据管理、统一状态面板与一键签到。",
+  "displayName": "WorkBuddy + Trae + Qoder + LobsterAI Connect",
+  "description": "一个插件接入全部渠道模型：WorkBuddy（含企业版，多账号注册表）/ Trae / Qoder CN / LobsterAI。支持渠道添加、改名、删除、凭据管理、统一状态面板、一键签到与模型聊天。",
   "version": "0.3.6",
   "author": {
     "name": "chengshenyangtai",

@@ -47,6 +47,7 @@
 | **WorkBuddy AI 国际版** | 国际版客户端全部模型（GPT-6 / Gemini-3.x / GLM-5.3 / Kimi-K3 / Grok-4.7…） | **限时免费模型**，如 `deepseek-v4.1-flash`（倍率 `x0.00`） | 装客户端后扫码登录，或勾选跟随桌面客户端的登录态 |
 | **Qoder CN** | 账号下全部模型 | 每日签到活动 | 官方 PAT，或直接用桌面 App 的登录态 |
 | **Trae CN** | IDE 里的全部模型 | 每日签到领积分 | 本机客户端凭据导出 |
+| **LobsterAI** | 登录态、每日签到、**积分余额**、账号下全部文本/视觉模型（32 个，含 DeepSeek-V4.x / GLM-5.x / Kimi-K3.x / Qwen3.8 / MiniMax-M3 / Doubao-Seed-2.1） | 每日签到领 100 积分（余额取上游 `totalCreditsRemaining`，另有「今日可领」提示） | **自动读取桌面客户端本地数据库**（`%APPDATA%/LobsterAI/lobsterai.sqlite`），无需粘贴 |
 
 国际版（`www.workbuddy.ai`）和国区版是**两个独立客户端**，模型阵容差别很大——国际版有 `gpt-6-astra` / `grok-4.7` / `deepseek-v4.1-flash` 这些国区没有的，国区有 `deepseek-v3-2-volc` 等。装了哪个就自动读哪个；两个都装就两个渠道并排。每个国际版槽位还能单独选**跟随桌面客户端的登录态**（适合只有一份账号）还是**只认自己的凭据**（多账号时的默认，扫码登录互不干扰）。
 

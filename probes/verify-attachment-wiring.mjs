@@ -29,9 +29,10 @@
  * 校验三条线都在 —— 从 ctx 解析、加兼容垫片、送进 adapter —— 便宜、无副作用、CI 能跑。
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * 源码目录：默认读**仓库自身**（相对本脚本），所以它校验的是真正被提交的那份；
@@ -41,9 +42,13 @@ import { join } from 'node:path';
  * 「跑着的那份」和「仓库里的那份」可以长期分叉 —— 装一次、以后手工改
  * node_modules，两者就再也不一样了。先前几个 verify 脚本都硬编码安装目录，
  * 于是它们只能证明「现在跑着的是好的」，证明不了「提交上去的是对的」。
+ *
+ * ⚠️ 仓库根**必须相对本脚本解析**：早先这里写死 `~/.dsh/repos/<包名>`，
+ * 仓库一搬家（2026-10 迁到 F 盘）整批断言就以「读不到文件」变红 ——
+ * 那看起来像接线坏了，实际只是路径没了。
  */
 const USE_INSTALLED = process.argv.includes('--installed');
-const REPO_ROOT = join(homedir(), '.dsh', 'repos', 'dsh-workbuddy-trae-qoder-connect');
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = USE_INSTALLED
   ? join(homedir(), '.dsh', 'profiles', 'desktop', 'node_modules', process.env.DSH_CONNECT_DIR ?? 'dsh-workbuddy-trae-qoder-connect', 'lib', 'providers')
   : join(REPO_ROOT, 'lib', 'providers');
@@ -55,7 +60,25 @@ const ok = (label, cond, extra = '') => {
   else { fail += 1; console.log(`  FAIL  ${label}${extra ? '   ' + extra : ''}`); }
 };
 
-const PROVIDERS = ['trae', 'qoder', 'workbuddy'];
+const PROVIDERS = ['trae', 'qoder', 'workbuddy', 'lobsterai'];
+
+/**
+ * 取一个 provider 的**全部源码**（`index.js` + 同目录其它 `.js`）。
+ *
+ * 为什么要跨文件：WorkBuddy / Trae / Qoder 都是单文件 provider，三样东西
+ * （从 ctx 取 store、套垫片、送进 adapter）天然写在一起；LobsterAI 按职责拆成了
+ * `index.js`（注册与路由）/ `adapter.js`（建 adapter 的那一行）/ `shim.js`，
+ * 于是「只读 index.js」必然假红。断言的对象是**这个 provider 有没有接附件**，
+ * 不是「某个文件里凑齐三段字符串」，按目录合并才符合原意。
+ */
+function providerSource(dir) {
+  const parts = [];
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.js')) continue;
+    parts.push(readFileSync(join(dir, name), 'utf8'));
+  }
+  return parts.join('\n');
+}
 
 /**
  * 源码里 `new PiAiAdapter(` / `new WorkBuddyPiAiAdapter(` 的实参里是否出现 `resolveAttachments`。
@@ -91,12 +114,12 @@ function adapterArgsIncludeResolveAttachments(src) {
 }
 
 for (const p of PROVIDERS) {
-  const file = join(SRC, p, 'index.js');
+  const dir = join(SRC, p);
   let src;
   try {
-    src = readFileSync(file, 'utf8');
+    src = providerSource(dir);
   } catch {
-    console.log(`  FAIL  ${p} 读不到 ${file}`);
+    console.log(`  FAIL  ${p} 读不到 ${dir}`);
     fail += 1;
     continue;
   }
